@@ -44,15 +44,29 @@
                         {% endif %}
                     </td>
                     <td>
-                        <form action="/admin/users/{{ u.username }}" method="POST" onsubmit="return confirm('Are you sure you want to delete user {{ u.username }}?');" style="display: inline;">
-                            <!-- HTML Form doesn't support DELETE, so we route through standard POST to DELETE in main.py, or we handle it via a delete form -->
-                            <div style="display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start;">
-                                <label class="form-checkbox" style="font-size: 0.75rem;">
-                                    <input type="checkbox" name="delete_files" value="true"> Delete Files
-                                </label>
-                                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-                            </div>
-                        </form>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            {% if u.is_running %}
+                            <form action="/admin/session/stop/{{ u.username }}" method="POST" style="display: inline;">
+                                <button type="submit" class="btn btn-outline btn-sm">Stop</button>
+                            </form>
+                            <form action="/admin/session/restart/{{ u.username }}" method="POST" style="display: inline;">
+                                <button type="submit" class="btn btn-primary btn-sm">Restart</button>
+                            </form>
+                            {% else %}
+                            <form action="/admin/session/start/{{ u.username }}" method="POST" style="display: inline;">
+                                <button type="submit" class="btn btn-success btn-sm">Start</button>
+                            </form>
+                            {% endif %}
+                            
+                            <form action="/admin/users/{{ u.username }}" method="POST" onsubmit="return confirm('Are you sure you want to delete user {{ u.username }}?');" style="display: inline; margin-left: 0.5rem; border-left: 1px solid var(--border-color); padding-left: 0.5rem;">
+                                <div style="display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start;">
+                                    <label class="form-checkbox" style="font-size: 0.75rem;">
+                                        <input type="checkbox" name="delete_files" value="true"> Delete Files
+                                    </label>
+                                    <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                                </div>
+                            </form>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}

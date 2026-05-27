@@ -193,6 +193,57 @@ def admin_delete_user(
     
     return RedirectResponse(url=f"/admin?success={msg}", status_code=status.HTTP_303_SEE_OTHER)
 
+# --- Admin Session Controls ---
+
+@app.post("/admin/session/start/{username}")
+def admin_start_session(username: str, admin_user=Depends(require_admin)):
+    user = db.get_user_by_username(username)
+    if not user:
+        return RedirectResponse(url="/admin?error=User+not+found", status_code=status.HTTP_303_SEE_OTHER)
+        
+    port = user['port']
+    token = secrets.token_urlsafe(16)
+    
+    success = spawner.spawn_session(username, port, token)
+    if not success:
+        return RedirectResponse(url=f"/admin?error=Failed+to+start+session+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+        
+    db.update_token(username, token)
+    return RedirectResponse(url=f"/admin?success=JupyterLab+started+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/admin/session/stop/{username}")
+def admin_stop_session(username: str, admin_user=Depends(require_admin)):
+    user = db.get_user_by_username(username)
+    if not user:
+        return RedirectResponse(url="/admin?error=User+not+found", status_code=status.HTTP_303_SEE_OTHER)
+        
+    success = spawner.stop_session(username)
+    if not success:
+        return RedirectResponse(url=f"/admin?error=Failed+to+stop+session+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+        
+    db.update_token(username, None)
+    return RedirectResponse(url=f"/admin?success=JupyterLab+stopped+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/admin/session/restart/{username}")
+def admin_restart_session(username: str, admin_user=Depends(require_admin)):
+    user = db.get_user_by_username(username)
+    if not user:
+        return RedirectResponse(url="/admin?error=User+not+found", status_code=status.HTTP_303_SEE_OTHER)
+        
+    port = user['port']
+    token = secrets.token_urlsafe(16)
+    
+    # Stop first
+    spawner.stop_session(username)
+    # Start again
+    success = spawner.spawn_session(username, port, token)
+    if not success:
+        db.update_token(username, None)
+        return RedirectResponse(url=f"/admin?error=Failed+to+restart+session+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+        
+    db.update_token(username, token)
+    return RedirectResponse(url=f"/admin?success=JupyterLab+restarted+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+
 # --- User Session Controls ---
 
 @app.post("/session/start")

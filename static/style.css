@@ -106,6 +106,16 @@ header {
     transform: translateY(-1px);
 }
 
+.btn-success {
+    background-color: var(--success-color);
+    color: white;
+}
+
+.btn-success:hover {
+    background-color: #059669;
+    transform: translateY(-1px);
+}
+
 .btn-outline {
     background-color: transparent;
     border: 1px solid var(--border-color);
