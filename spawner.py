@@ -56,7 +56,9 @@ def spawn_session(username: str, port: int, token: str) -> bool:
     jupyter_bin = user_dir / ".venv" / "bin" / "jupyter"
     
     # Construct the jupyter lab startup command
+    # cd into user_dir first so JupyterLab terminal opens in user's directory
     jupyter_cmd = (
+        f"cd {user_dir} && "
         f"exec {jupyter_bin} lab "
         f"--ip=127.0.0.1 "
         f"--port={port} "
