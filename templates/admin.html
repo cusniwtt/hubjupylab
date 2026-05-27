@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Dashboard - HubJupyLab{% endblock %}
+
+{% block content %}
+<div class="admin-grid">
+    <!-- Left Column: User List -->
+    <div class="card">
+        <div class="section-title">
+            <h2>JupyterLab Hub Users</h2>
+            <span style="font-size: 0.875rem; color: var(--text-secondary);">Ports 8081 - 8089</span>
+        </div>
+        
+        {% if users %}
+        <table class="user-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Port</th>
+                    <th>Status</th>
+                    <th>JupyterLab Endpoint</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td><strong>{{ u.username }}</strong></td>
+                    <td><code>{{ u.port }}</code></td>
+                    <td>
+                        {% if u.is_running %}
+                        <span class="badge badge-running">🟢 Running</span>
+                        {% else %}
+                        <span class="badge badge-stopped">🔴 Stopped</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if u.is_running and u.token %}
+                        <a href="{{ u.jupyter_url }}" target="_blank" class="jupyter-link">
+                            Open JupyterLab ↗
+                        </a>
+                        {% else %}
+                        <span style="color: var(--text-secondary); font-style: italic;">Stopped</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form action="/admin/users/{{ u.username }}" method="POST" onsubmit="return confirm('Are you sure you want to delete user {{ u.username }}?');" style="display: inline;">
+                            <!-- HTML Form doesn't support DELETE, so we route through standard POST to DELETE in main.py, or we handle it via a delete form -->
+                            <div style="display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-start;">
+                                <label class="form-checkbox" style="font-size: 0.75rem;">
+                                    <input type="checkbox" name="delete_files" value="true"> Delete Files
+                                </label>
+                                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                            </div>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color: var(--text-secondary); text-align: center; margin-top: 2rem;">No users created yet. Use the form on the right to create one.</p>
+        {% endif %}
+    </div>
+
+    <!-- Right Column: Create User -->
+    <div class="card" style="height: fit-content;">
+        <div class="section-title">
+            <h2>Create New User</h2>
+        </div>
+        <form action="/admin/users" method="POST">
+            <div class="form-group">
+                <label for="new_username">Username</label>
+                <input type="text" id="new_username" name="username" class="form-control" placeholder="e.g. wayu" pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, underscores and hyphens allowed" required>
+            </div>
+            <div class="form-group">
+                <label for="new_password">Password</label>
+                <input type="password" id="new_password" name="password" class="form-control" placeholder="Enter user password" required>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;">Create User</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

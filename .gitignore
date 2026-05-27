@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+ENV/
+
+# Databases
+*.db
+*.db-journal
+
+# Local Environment Configs
+.env
+dev_users/
+
+# IDEs
+.vscode/
+.idea/

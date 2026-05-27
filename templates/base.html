@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}HubJupyLab{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <header>
+        <div class="logo-container">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2" y="2" width="20" height="20" rx="4" fill="#6366F1" fill-opacity="0.2" stroke="#6366F1" stroke-width="2"/>
+                <circle cx="8" cy="12" r="2" fill="#34D399"/>
+                <circle cx="16" cy="12" r="2" fill="#818CF8"/>
+            </svg>
+            <h1>HubJupyLab</h1>
+        </div>
+        {% if user %}
+        <div class="nav-user">
+            <span>Logged in as: <strong>{{ user.username }}</strong> ({{ user.role }})</span>
+            <a href="/logout" class="btn btn-outline btn-sm">Logout</a>
+        </div>
+        {% endif %}
+    </header>
+
+    <main>
+        {% if error %}
+        <div class="alert alert-error">
+            {{ error }}
+        </div>
+        {% endif %}
+        {% if success %}
+        <div class="alert alert-success">
+            {{ success }}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}User Dashboard - HubJupyLab{% endblock %}
+
+{% block content %}
+<div class="user-card card">
+    <div class="status-section">
+        <div>
+            <h2 style="font-size: 1.5rem; margin-bottom: 0.25rem;">Your JupyterLab Server</h2>
+            <p style="font-size: 0.875rem; color: var(--text-secondary);">Port Assignment: <code>{{ user_port }}</code></p>
+        </div>
+        <div>
+            {% if is_running %}
+            <span class="badge badge-running" style="font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟢 Running</span>
+            {% else %}
+            <span class="badge badge-stopped" style="font-size: 0.875rem; padding: 0.4rem 0.8rem;">🔴 Stopped</span>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if is_running and jupyter_url %}
+    <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Click URL to access JupyterLab:</label>
+        <div class="jupyter-url-box">
+            <code id="jupyterUrl">{{ jupyter_url }}</code>
+            <button onclick="copyToClipboard()" class="copy-btn" title="Copy to clipboard">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+            </button>
+        </div>
+        <a href="{{ jupyter_url }}" target="_blank" class="btn btn-primary" style="text-decoration: none;">
+            Open JupyterLab ↗
+        </a>
+    </div>
+    {% else %}
+    <div class="jupyter-url-box" style="justify-content: center; padding: 2rem; margin-bottom: 1.5rem;">
+        <p style="color: var(--text-secondary); text-align: center;">JupyterLab server is stopped. Click Start to boot up your instance.</p>
+    </div>
+    {% endif %}
+
+    <div class="controls-section">
+        {% if not is_running %}
+        <form action="/session/start" method="POST" style="flex: 1;">
+            <button type="submit" class="btn btn-primary" style="width: 100%;">Start Server</button>
+        </form>
+        {% else %}
+        <form action="/session/restart" method="POST" style="flex: 1;">
+            <button type="submit" class="btn btn-outline" style="width: 100%;">Restart Server</button>
+        </form>
+        <form action="/session/stop" method="POST" style="flex: 1;">
+            <button type="submit" class="btn btn-danger" style="width: 100%;">Stop Server</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function copyToClipboard() {
+    var urlText = document.getElementById("jupyterUrl").innerText;
+    navigator.clipboard.writeText(urlText).then(function() {
+        alert("JupyterLab URL copied to clipboard!");
+    }, function(err) {
+        console.error('Could not copy text: ', err);
+    });
+}
+</script>
+{% endblock %}
