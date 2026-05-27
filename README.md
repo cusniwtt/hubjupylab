@@ -8,7 +8,7 @@ HubJupyLab is a lightweight JupyterLab Hub designed for small teams (up to 9 use
 - **`tmux`-Managed Sessions**: JupyterLab runs in detached tmux sessions, surviving hub restarts.
 - **Port Allocation**: Automatically assigns unique ports from `8081-8089` to users.
 - **Token-Auth Security**: Generates unique, secure access tokens for each JupyterLab session.
-- **Clean Admin Dashboard**: Create/delete users, see server status, and optionally clean up user files.
+- **Clean Admin Dashboard**: Create/delete users, start/stop/restart any user's session, see server status, and optionally clean up user files.
 - **User Dashboard**: Users can start, stop, restart, and copy their JupyterLab endpoint URL.
 
 ---
