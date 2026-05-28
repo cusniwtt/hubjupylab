@@ -60,7 +60,7 @@ def spawn_session(username: str, port: int, token: str) -> bool:
     jupyter_cmd = (
         f"cd {user_dir} && "
         f"exec {jupyter_bin} lab "
-        f"--ip=127.0.0.1 "
+        f"--ip=0.0.0.0 "
         f"--port={port} "
         f"--IdentityProvider.token={token} "
         f"--no-browser "
