@@ -231,14 +231,30 @@ main {
 
 /* Admin Dashboard layout */
 .admin-grid {
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 2rem;
 }
 
-@media (min-width: 768px) {
-    .admin-grid {
-        grid-template-columns: 2fr 1fr;
+.admin-bottom-row {
+    display: flex;
+    gap: 2rem;
+    align-items: stretch;
+}
+
+.admin-bottom-row > .card:first-child {
+    flex: 1;
+    min-width: 300px;
+}
+
+.admin-bottom-row > .card:last-child {
+    flex: 2;
+    min-width: 300px;
+}
+
+@media (max-width: 1024px) {
+    .admin-bottom-row {
+        flex-direction: column;
     }
 }
 

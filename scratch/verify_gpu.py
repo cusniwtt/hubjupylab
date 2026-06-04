@@ -19,7 +19,7 @@ def test_gpu_features():
     db.delete_user("gpu_test_user")
     
     # 2. Create test user
-    db.create_user("gpu_test_user", "test_pass", role="user", port=8082)
+    db.create_user("gpu_test_user", "test_pass", role="user", port=8095)
     user = db.get_user_by_username("gpu_test_user")
     assert user is not None
     assert user['gpu_ssh_host'] is None

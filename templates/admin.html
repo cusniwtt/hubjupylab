@@ -83,61 +83,64 @@
             </tbody>
         </table>
         {% else %}
-        <p style="color: var(--text-secondary); text-align: center; margin-top: 2rem;">No users created yet. Use the form on the right to create one.</p>
+        <p style="color: var(--text-secondary); text-align: center; margin-top: 2rem;">No users created yet. Use the form below to create one.</p>
         {% endif %}
     </div>
 
-    <!-- Right Column: Create User -->
-    <div class="card" style="height: fit-content;">
-        <div class="section-title">
-            <h2>Create New User</h2>
+    <!-- Bottom Row: Create User & GPU VM Config -->
+    <div class="admin-bottom-row">
+        <!-- Create User -->
+        <div class="card" style="height: fit-content;">
+            <div class="section-title">
+                <h2>Create New User</h2>
+            </div>
+            <form action="/admin/users" method="POST">
+                <div class="form-group">
+                    <label for="new_username">Username</label>
+                    <input type="text" id="new_username" name="username" class="form-control" placeholder="e.g. wayu" pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, underscores and hyphens allowed" required>
+                </div>
+                <div class="form-group">
+                    <label for="new_password">Password</label>
+                    <input type="password" id="new_password" name="password" class="form-control" placeholder="Enter user password" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;">Create User</button>
+            </form>
         </div>
-        <form action="/admin/users" method="POST">
-            <div class="form-group">
-                <label for="new_username">Username</label>
-                <input type="text" id="new_username" name="username" class="form-control" placeholder="e.g. wayu" pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, underscores and hyphens allowed" required>
-            </div>
-            <div class="form-group">
-                <label for="new_password">Password</label>
-                <input type="password" id="new_password" name="password" class="form-control" placeholder="Enter user password" required>
-            </div>
-            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;">Create User</button>
-        </form>
-    </div>
-</div>
 
-<!-- GPU SSH Configuration -->
-<div class="card" style="margin-top: 2rem;">
-    <div class="section-title">
-        <h2>🖥️ GPU VM Configuration (rsync SSH)</h2>
-        <form action="/admin/gpu/test" method="POST" style="display: inline;">
-            <button type="submit" class="btn btn-sm btn-outline">Test SSH</button>
-        </form>
-    </div>
-    <form action="/admin/gpu/config" method="POST">
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
-            <div class="form-group">
-                <label>SSH Host</label>
-                <input type="text" name="ssh_host" value="{{ gpu_config.ssh_host }}" class="form-control" placeholder="e.g. 123.45.67.89">
+        <!-- GPU SSH Configuration -->
+        <div class="card" style="height: fit-content;">
+            <div class="section-title">
+                <h2>🖥️ GPU VM Configuration (rsync SSH)</h2>
+                <form action="/admin/gpu/test" method="POST" style="display: inline;">
+                    <button type="submit" class="btn btn-sm btn-outline">Test SSH</button>
+                </form>
             </div>
-            <div class="form-group">
-                <label>SSH Port</label>
-                <input type="number" name="ssh_port" value="{{ gpu_config.ssh_port }}" class="form-control">
-            </div>
-            <div class="form-group">
-                <label>SSH User</label>
-                <input type="text" name="ssh_user" value="{{ gpu_config.ssh_user }}" class="form-control">
-            </div>
-            <div class="form-group">
-                <label>SSH Key Path</label>
-                <input type="text" name="ssh_key_path" value="{{ gpu_config.ssh_key_path }}" class="form-control" placeholder="/root/.ssh/id_rsa">
-            </div>
-            <div class="form-group">
-                <label>Remote Base Dir</label>
-                <input type="text" name="remote_base_dir" value="{{ gpu_config.remote_base_dir }}" class="form-control">
-            </div>
+            <form action="/admin/gpu/config" method="POST">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                    <div class="form-group">
+                        <label>SSH Host</label>
+                        <input type="text" name="ssh_host" value="{{ gpu_config.ssh_host }}" class="form-control" placeholder="e.g. 123.45.67.89">
+                    </div>
+                    <div class="form-group">
+                        <label>SSH Port</label>
+                        <input type="number" name="ssh_port" value="{{ gpu_config.ssh_port }}" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>SSH User</label>
+                        <input type="text" name="ssh_user" value="{{ gpu_config.ssh_user }}" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>SSH Key Path</label>
+                        <input type="text" name="ssh_key_path" value="{{ gpu_config.ssh_key_path }}" class="form-control" placeholder="/root/.ssh/id_rsa">
+                    </div>
+                    <div class="form-group">
+                        <label>Remote Base Dir</label>
+                        <input type="text" name="remote_base_dir" value="{{ gpu_config.remote_base_dir }}" class="form-control">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 1rem;">Save GPU Config</button>
+            </form>
         </div>
-        <button type="submit" class="btn btn-primary" style="margin-top: 1rem;">Save GPU Config</button>
-    </form>
+    </div>
 </div>
 {% endblock %}
