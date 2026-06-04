@@ -330,6 +330,8 @@ def admin_gpu_test(admin_user=Depends(require_admin)):
 @app.post("/admin/gpu/assign/{username}")
 def admin_gpu_assign(
     username: str,
+    gpu_ssh_host: str = Form(""),
+    gpu_ssh_port: int = Form(22),
     gpu_endpoint: str = Form(""),
     gpu_token: str = Form(""),
     admin_user=Depends(require_admin)
@@ -337,7 +339,7 @@ def admin_gpu_assign(
     if not gpu_endpoint:
         db.unassign_gpu(username)
         return RedirectResponse(url=f"/admin?success=GPU+access+removed+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
-    db.assign_gpu(username, gpu_endpoint, gpu_token)
+    db.assign_gpu(username, gpu_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port)
     return RedirectResponse(url=f"/admin?success=GPU+assigned+to+{username}", status_code=status.HTTP_303_SEE_OTHER)
 
 # --- User GPU Access ---
@@ -364,6 +366,23 @@ def user_access_gpu(current_user=Depends(require_auth)):
     gpu_url = f"{gpu_url}{separator}token={user['gpu_token']}"
     
     return RedirectResponse(url=gpu_url, status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/session/gpu/sync-back")
+def user_sync_back_gpu(current_user=Depends(require_auth)):
+    if current_user['role'] == 'admin':
+        return RedirectResponse(url="/admin")
+    
+    username = current_user['username']
+    user = db.get_user_by_username(username)
+    
+    if not user['gpu_endpoint'] or not user['gpu_token']:
+        return RedirectResponse(url="/dashboard?error=No+GPU+session+assigned.+Contact+admin.", status_code=status.HTTP_303_SEE_OTHER)
+    
+    success, msg = gpu.rsync_gpu_to_user(username)
+    if not success:
+        return RedirectResponse(url="/dashboard?error=GPU+sync+back+failed", status_code=status.HTTP_303_SEE_OTHER)
+        
+    return RedirectResponse(url="/dashboard?success=Synced+files+back+from+GPU+server", status_code=status.HTTP_303_SEE_OTHER)
 
 # Catch redirection exceptions and map them to HTTP responses
 @app.exception_handler(HTTPException)
