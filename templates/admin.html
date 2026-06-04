@@ -20,6 +20,7 @@
                     <th>Status</th>
                     <th>JupyterLab Endpoint</th>
                     <th>Action</th>
+                    <th>GPU</th>
                 </tr>
             </thead>
             <tbody>
@@ -68,6 +69,13 @@
                             </form>
                         </div>
                     </td>
+                    <td>
+                        <form action="/admin/gpu/assign/{{ u.username }}" method="POST" style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <input type="text" name="gpu_endpoint" value="{{ u.gpu_endpoint or '' }}" placeholder="GPU endpoint URL" class="form-control" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
+                            <input type="text" name="gpu_token" value="{{ u.gpu_token or '' }}" placeholder="Token" class="form-control" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
+                            <button type="submit" class="btn btn-sm btn-outline">Save GPU</button>
+                        </form>
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -94,5 +102,40 @@
             <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;">Create User</button>
         </form>
     </div>
+</div>
+
+<!-- GPU SSH Configuration -->
+<div class="card" style="margin-top: 2rem;">
+    <div class="section-title">
+        <h2>🖥️ GPU VM Configuration (rsync SSH)</h2>
+        <form action="/admin/gpu/test" method="POST" style="display: inline;">
+            <button type="submit" class="btn btn-sm btn-outline">Test SSH</button>
+        </form>
+    </div>
+    <form action="/admin/gpu/config" method="POST">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+            <div class="form-group">
+                <label>SSH Host</label>
+                <input type="text" name="ssh_host" value="{{ gpu_config.ssh_host }}" class="form-control" placeholder="e.g. 123.45.67.89">
+            </div>
+            <div class="form-group">
+                <label>SSH Port</label>
+                <input type="number" name="ssh_port" value="{{ gpu_config.ssh_port }}" class="form-control">
+            </div>
+            <div class="form-group">
+                <label>SSH User</label>
+                <input type="text" name="ssh_user" value="{{ gpu_config.ssh_user }}" class="form-control">
+            </div>
+            <div class="form-group">
+                <label>SSH Key Path</label>
+                <input type="text" name="ssh_key_path" value="{{ gpu_config.ssh_key_path }}" class="form-control" placeholder="/root/.ssh/id_rsa">
+            </div>
+            <div class="form-group">
+                <label>Remote Base Dir</label>
+                <input type="text" name="remote_base_dir" value="{{ gpu_config.remote_base_dir }}" class="form-control">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top: 1rem;">Save GPU Config</button>
+    </form>
 </div>
 {% endblock %}

@@ -92,3 +92,26 @@ To configure HubJupyLab to run on system startup:
 - **User directories**: Each user gets a directory at `{BASE_DIR}/{username}` containing their `.venv/` and notebook workspace.
 - **SQLite Database**: A SQLite file `hubjupylab.db` is stored inside `{BASE_DIR}` to track user credentials, ports, and current session tokens.
 - **tmux Sessions**: Created using session name `hub_{username}`. Use `tmux list-sessions` to view running instances on the host system.
+
+---
+
+## Next Rolling Feature: Remote GPU Kernels (SSH)
+
+**Goal**: Run notebook UI on A_VM (non-GPU), execute code on B_VM (RunPod GPU instance) via SSH remote kernels.
+
+**Approach considered**: `remote_ikernel` — installs kernel specs in user venvs that SSH into B_VM and launch `ipykernel` there. User sees "Python 3 (GPU)" in JupyterLab kernel picker.
+
+**Draft plan (6 steps)**:
+1. DB `gpu_vms` table — store registered GPU VM connection info
+2. `remote_kernel.py` — manage kernel spec installation/removal per user
+3. `spawner.py` — install `remote_ikernel` into user venvs
+4. Admin routes — GPU VM CRUD + SSH test + sync kernels
+5. Admin template — `gpu_admin.html` for VM management
+6. End-to-end test
+
+**Key constraints**:
+- RunPod pods are ephemeral (spin up/down, new IP each time, no persistent data)
+- Admin manually registers new pod IP via Hub UI each spin-up
+- `ipykernel` must be installed on B_VM each time (not persistent)
+
+**Status**: Draft — pending simplification based on actual usage pattern.

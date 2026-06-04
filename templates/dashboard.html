@@ -54,6 +54,23 @@
         </form>
         {% endif %}
     </div>
+
+    {% if has_gpu %}
+    <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <div>
+                <h3 style="font-size: 1.1rem; margin-bottom: 0.25rem;">🖥️ GPU Server</h3>
+                <p style="font-size: 0.75rem; color: var(--text-secondary);">Files will be synced before launch</p>
+            </div>
+            <span class="badge" style="background-color: rgba(168, 85, 247, 0.15); color: #c084fc; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟣 Available</span>
+        </div>
+        <form action="/session/gpu" method="POST">
+            <button type="submit" class="btn" style="width: 100%; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600;">
+                🚀 Access GPU Server
+            </button>
+        </form>
+    </div>
+    {% endif %}
 </div>
 
 <script>

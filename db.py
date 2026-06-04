@@ -32,7 +32,29 @@ def init_db():
         )
     """)
     conn.commit()
-    
+
+    # Add GPU columns to existing users table
+    for col in ["gpu_endpoint TEXT", "gpu_token TEXT"]:
+        try:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+    # GPU SSH config table (single row)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gpu_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            ssh_host TEXT NOT NULL DEFAULT '',
+            ssh_port INTEGER NOT NULL DEFAULT 22,
+            ssh_user TEXT NOT NULL DEFAULT 'root',
+            ssh_key_path TEXT NOT NULL DEFAULT '',
+            remote_base_dir TEXT NOT NULL DEFAULT '/workspace'
+        )
+    """)
+    cursor.execute("INSERT OR IGNORE INTO gpu_config (id) VALUES (1)")
+    conn.commit()
+
     # Check if admin user exists, if not seed it
     cursor.execute("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1")
     if not cursor.fetchone():
@@ -98,3 +120,52 @@ def get_used_ports():
     ports = [row['port'] for row in cursor.fetchall()]
     conn.close()
     return ports
+
+def get_gpu_config():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM gpu_config WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return {
+        'ssh_host': '', 'ssh_port': 22, 'ssh_user': 'root',
+        'ssh_key_path': '', 'remote_base_dir': '/workspace'
+    }
+
+def save_gpu_config(ssh_host: str, ssh_port: int, ssh_user: str, ssh_key_path: str, remote_base_dir: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO gpu_config (id, ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir)
+        VALUES (1, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            ssh_host = excluded.ssh_host,
+            ssh_port = excluded.ssh_port,
+            ssh_user = excluded.ssh_user,
+            ssh_key_path = excluded.ssh_key_path,
+            remote_base_dir = excluded.remote_base_dir
+    """, (ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir))
+    conn.commit()
+    conn.close()
+
+def assign_gpu(username: str, gpu_endpoint: str, gpu_token: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET gpu_endpoint = ?, gpu_token = ? WHERE username = ?",
+        (gpu_endpoint, gpu_token, username)
+    )
+    conn.commit()
+    conn.close()
+
+def unassign_gpu(username: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET gpu_endpoint = NULL, gpu_token = NULL WHERE username = ?",
+        (username,)
+    )
+    conn.commit()
+    conn.close()
