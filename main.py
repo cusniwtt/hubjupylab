@@ -7,6 +7,7 @@ from itsdangerous import Signer, BadSignature
 import config
 import db
 import spawner
+import gpu
 
 app = FastAPI(title="HubJupyLab")
 
@@ -110,10 +111,12 @@ def admin_dashboard(request: Request, error: str = None, success: str = None, ad
             user_dict['jupyter_url'] = ""
         enriched_users.append(user_dict)
         
+    gpu_config = db.get_gpu_config()
+
     return templates.TemplateResponse(
         request=request,
         name="admin.html",
-        context={"user": admin_user, "users": enriched_users, "error": error, "success": success}
+        context={"user": admin_user, "users": enriched_users, "error": error, "success": success, "gpu_config": gpu_config}
     )
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -129,6 +132,9 @@ def user_dashboard(request: Request, error: str = None, success: str = None, cur
     if is_running and current_user['token']:
         jupyter_url = f"http://{host_ip}:{current_user['port']}/lab?token={current_user['token']}"
         
+    has_gpu = bool(current_user['gpu_endpoint'])
+    gpu_endpoint = current_user['gpu_endpoint'] or ""
+
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -138,7 +144,9 @@ def user_dashboard(request: Request, error: str = None, success: str = None, cur
             "user_port": current_user['port'],
             "jupyter_url": jupyter_url,
             "error": error,
-            "success": success
+            "success": success,
+            "has_gpu": has_gpu,
+            "gpu_endpoint": gpu_endpoint
         }
     )
 
@@ -296,6 +304,66 @@ def user_restart_session(current_user=Depends(require_auth)):
         
     db.update_token(username, token)
     return RedirectResponse(url="/dashboard?success=JupyterLab+restarted", status_code=status.HTTP_303_SEE_OTHER)
+
+# --- Admin GPU Configuration ---
+
+@app.post("/admin/gpu/config")
+def admin_gpu_config(
+    request: Request,
+    ssh_host: str = Form(""),
+    ssh_port: int = Form(22),
+    ssh_user: str = Form("root"),
+    ssh_key_path: str = Form(""),
+    remote_base_dir: str = Form("/workspace"),
+    admin_user=Depends(require_admin)
+):
+    db.save_gpu_config(ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir)
+    return RedirectResponse(url="/admin?success=GPU+SSH+config+saved", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/admin/gpu/test")
+def admin_gpu_test(admin_user=Depends(require_admin)):
+    success, msg = gpu.test_gpu_ssh()
+    if success:
+        return RedirectResponse(url="/admin?success=GPU+SSH+connection+OK", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=f"/admin?error=GPU+SSH+test+failed", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/admin/gpu/assign/{username}")
+def admin_gpu_assign(
+    username: str,
+    gpu_endpoint: str = Form(""),
+    gpu_token: str = Form(""),
+    admin_user=Depends(require_admin)
+):
+    if not gpu_endpoint:
+        db.unassign_gpu(username)
+        return RedirectResponse(url=f"/admin?success=GPU+access+removed+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+    db.assign_gpu(username, gpu_endpoint, gpu_token)
+    return RedirectResponse(url=f"/admin?success=GPU+assigned+to+{username}", status_code=status.HTTP_303_SEE_OTHER)
+
+# --- User GPU Access ---
+
+@app.post("/session/gpu")
+def user_access_gpu(current_user=Depends(require_auth)):
+    if current_user['role'] == 'admin':
+        return RedirectResponse(url="/admin")
+    
+    username = current_user['username']
+    user = db.get_user_by_username(username)
+    
+    if not user['gpu_endpoint'] or not user['gpu_token']:
+        return RedirectResponse(url="/dashboard?error=No+GPU+session+assigned.+Contact+admin.", status_code=status.HTTP_303_SEE_OTHER)
+    
+    # Rsync user directory to GPU VM
+    success, msg = gpu.rsync_user_to_gpu(username)
+    if not success:
+        return RedirectResponse(url=f"/dashboard?error=GPU+sync+failed", status_code=status.HTTP_303_SEE_OTHER)
+    
+    # Build the GPU JupyterLab URL with token
+    gpu_url = user['gpu_endpoint']
+    separator = '&' if '?' in gpu_url else '?'
+    gpu_url = f"{gpu_url}{separator}token={user['gpu_token']}"
+    
+    return RedirectResponse(url=gpu_url, status_code=status.HTTP_303_SEE_OTHER)
 
 # Catch redirection exceptions and map them to HTTP responses
 @app.exception_handler(HTTPException)
