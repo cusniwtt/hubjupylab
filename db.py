@@ -34,7 +34,7 @@ def init_db():
     conn.commit()
 
     # Add GPU columns to existing users table
-    for col in ["gpu_endpoint TEXT", "gpu_token TEXT"]:
+    for col in ["gpu_endpoint TEXT", "gpu_token TEXT", "gpu_ssh_host TEXT", "gpu_ssh_port INTEGER"]:
         try:
             cursor.execute(f"ALTER TABLE users ADD COLUMN {col}")
             conn.commit()
@@ -150,12 +150,12 @@ def save_gpu_config(ssh_host: str, ssh_port: int, ssh_user: str, ssh_key_path: s
     conn.commit()
     conn.close()
 
-def assign_gpu(username: str, gpu_endpoint: str, gpu_token: str):
+def assign_gpu(username: str, gpu_endpoint: str, gpu_token: str, gpu_ssh_host: str, gpu_ssh_port: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET gpu_endpoint = ?, gpu_token = ? WHERE username = ?",
-        (gpu_endpoint, gpu_token, username)
+        "UPDATE users SET gpu_endpoint = ?, gpu_token = ?, gpu_ssh_host = ?, gpu_ssh_port = ? WHERE username = ?",
+        (gpu_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port, username)
     )
     conn.commit()
     conn.close()
@@ -164,7 +164,7 @@ def unassign_gpu(username: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET gpu_endpoint = NULL, gpu_token = NULL WHERE username = ?",
+        "UPDATE users SET gpu_endpoint = NULL, gpu_token = NULL, gpu_ssh_host = NULL, gpu_ssh_port = NULL WHERE username = ?",
         (username,)
     )
     conn.commit()

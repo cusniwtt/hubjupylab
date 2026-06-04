@@ -71,6 +71,8 @@
                     </td>
                     <td>
                         <form action="/admin/gpu/assign/{{ u.username }}" method="POST" style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <input type="text" name="gpu_ssh_host" value="{{ u.gpu_ssh_host or '' }}" placeholder="SSH Host" class="form-control" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
+                            <input type="number" name="gpu_ssh_port" value="{{ u.gpu_ssh_port or 22 }}" placeholder="SSH Port" class="form-control" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
                             <input type="text" name="gpu_endpoint" value="{{ u.gpu_endpoint or '' }}" placeholder="GPU endpoint URL" class="form-control" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
                             <input type="text" name="gpu_token" value="{{ u.gpu_token or '' }}" placeholder="Token" class="form-control" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
                             <button type="submit" class="btn btn-sm btn-outline">Save GPU</button>

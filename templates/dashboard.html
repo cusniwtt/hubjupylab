@@ -64,11 +64,18 @@
             </div>
             <span class="badge" style="background-color: rgba(168, 85, 247, 0.15); color: #c084fc; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟣 Available</span>
         </div>
-        <form action="/session/gpu" method="POST">
-            <button type="submit" class="btn" style="width: 100%; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600;">
-                🚀 Access GPU Server
-            </button>
-        </form>
+        <div style="display: flex; gap: 1rem; margin-top: 0.5rem;">
+            <form action="/session/gpu" method="POST" style="flex: 1;">
+                <button type="submit" class="btn" style="width: 100%; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600;">
+                    🚀 Access GPU Server
+                </button>
+            </form>
+            <form action="/session/gpu/sync-back" method="POST" style="flex: 1;">
+                <button type="submit" class="btn btn-outline" style="width: 100%;">
+                    📥 Sync Back
+                </button>
+            </form>
+        </div>
     </div>
     {% endif %}
 </div>
