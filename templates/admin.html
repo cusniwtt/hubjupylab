@@ -7,8 +7,11 @@
     <!-- Left Column: User List -->
     <div class="card">
         <div class="section-title">
-            <h2>JupyterLab Hub Users</h2>
-            <span style="font-size: 0.875rem; color: var(--text-secondary);">Ports 8081 - 8089</span>
+            <div>
+                <h2>JupyterLab Hub Users</h2>
+                <span style="font-size: 0.875rem; color: var(--text-secondary);">Ports 8081 - 8089</span>
+            </div>
+            <a href="/admin/logs" class="btn btn-sm btn-outline" style="text-decoration: none;">📜 View Logs</a>
         </div>
         
         {% if users %}
@@ -20,7 +23,8 @@
                     <th>Status</th>
                     <th>JupyterLab Endpoint</th>
                     <th>Action</th>
-                    <th>GPU</th>
+                    <th>GPU Config</th>
+                    <th>GPU Status</th>
                 </tr>
             </thead>
             <tbody>
@@ -78,6 +82,36 @@
                             <button type="submit" class="btn btn-sm btn-outline">Save GPU</button>
                         </form>
                     </td>
+                    <td>
+                        <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start;">
+                            {% if u.gpu_init_status == 'ready' %}
+                            <span class="badge badge-running" style="background-color: rgba(16, 185, 129, 0.15); color: #10b981;">🟢 Ready</span>
+                            {% elif u.gpu_init_status == 'running' %}
+                            <span class="badge" style="background-color: rgba(59, 130, 246, 0.15); color: #60a5fa;">⏳ Running...</span>
+                            {% elif u.gpu_init_status == 'failed' %}
+                            <span class="badge badge-stopped" style="background-color: rgba(239, 68, 68, 0.15); color: #f87171;">🔴 Failed</span>
+                            {% elif u.gpu_init_status == 'pending' %}
+                            <span class="badge" style="background-color: rgba(245, 158, 11, 0.15); color: #fbbf24;">🟡 Pending</span>
+                            {% elif u.gpu_init_status == 'stopped' %}
+                            <span class="badge" style="background-color: rgba(156, 163, 175, 0.15); color: #9ca3af;">⚪ Stopped</span>
+                            {% else %}
+                            <span style="color: var(--text-secondary); font-style: italic; font-size: 0.75rem;">None</span>
+                            {% endif %}
+                            
+                            <div style="display: flex; gap: 0.25rem;">
+                                {% if u.gpu_init_status == 'ready' %}
+                                <form action="/admin/gpu/stop/{{ u.username }}" method="POST" style="display: inline;">
+                                    <button type="submit" class="btn btn-danger btn-sm" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">Stop</button>
+                                </form>
+                                {% endif %}
+                                {% if u.gpu_init_status %}
+                                <form action="/admin/gpu/reset/{{ u.username }}" method="POST" style="display: inline;">
+                                    <button type="submit" class="btn btn-outline btn-sm" style="font-size: 0.7rem; padding: 0.2rem 0.4rem;">Reset</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -87,7 +121,7 @@
         {% endif %}
     </div>
 
-    <!-- Bottom Row: Create User & GPU VM Config -->
+    <!-- Bottom Row: Create User -->
     <div class="admin-bottom-row">
         <!-- Create User -->
         <div class="card" style="height: fit-content;">
@@ -106,41 +140,103 @@
                 <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;">Create User</button>
             </form>
         </div>
+    </div>
 
-        <!-- GPU SSH Configuration -->
-        <div class="card" style="height: fit-content;">
-            <div class="section-title">
-                <h2>🖥️ GPU VM Configuration (rsync SSH)</h2>
-                <form action="/admin/gpu/test" method="POST" style="display: inline;">
-                    <button type="submit" class="btn btn-sm btn-outline">Test SSH</button>
-                </form>
-            </div>
-            <form action="/admin/gpu/config" method="POST">
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
-                    <div class="form-group">
-                        <label>SSH Host</label>
-                        <input type="text" name="ssh_host" value="{{ gpu_config.ssh_host }}" class="form-control" placeholder="e.g. 123.45.67.89">
-                    </div>
-                    <div class="form-group">
-                        <label>SSH Port</label>
-                        <input type="number" name="ssh_port" value="{{ gpu_config.ssh_port }}" class="form-control">
-                    </div>
-                    <div class="form-group">
-                        <label>SSH User</label>
-                        <input type="text" name="ssh_user" value="{{ gpu_config.ssh_user }}" class="form-control">
-                    </div>
-                    <div class="form-group">
-                        <label>SSH Key Path</label>
-                        <input type="text" name="ssh_key_path" value="{{ gpu_config.ssh_key_path }}" class="form-control" placeholder="/root/.ssh/id_rsa">
-                    </div>
-                    <div class="form-group">
-                        <label>Remote Base Dir</label>
-                        <input type="text" name="remote_base_dir" value="{{ gpu_config.remote_base_dir }}" class="form-control">
-                    </div>
+    <!-- GPU Initialization Console -->
+    <div class="card" style="margin-top: 2rem;">
+        <div class="section-title">
+            <h2>🖥️ GPU Server Initialization Console</h2>
+            <span class="badge" style="background-color: rgba(99, 102, 241, 0.15); color: #818cf8;">Admin Utility</span>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1.5rem;">
+            <!-- Init Trigger Controls -->
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <div class="form-group">
+                    <label for="init_user_select">Select User to Initialize GPU</label>
+                    <select id="init_user_select" class="form-control" style="background: #0f172a; color: var(--text-primary);" onchange="updateInitBtnState()">
+                        <option value="">-- Select User --</option>
+                        {% for u in users %}
+                            {% if u.gpu_ssh_host %}
+                                <option value="{{ u.username }}" data-status="{{ u.gpu_init_status or '' }}">{{ u.username }} ({% if u.gpu_init_status %}{{ u.gpu_init_status }}{% else %}pending{% endif %})</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
                 </div>
-                <button type="submit" class="btn btn-primary" style="margin-top: 1rem;">Save GPU Config</button>
-            </form>
+                <button type="button" id="start_init_btn" onclick="startGPUInit()" class="btn btn-primary" style="width: 100%;">🚀 Initialize GPU</button>
+            </div>
+            
+            <!-- Terminal Output Console -->
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <label style="font-size: 0.875rem; color: var(--text-secondary);">Live Setup Console Log:</label>
+                <div id="init_console" style="background: #090d16; border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem; font-family: 'Courier New', Courier, monospace; font-size: 0.85rem; height: 180px; overflow-y: auto; color: #34d399; white-space: pre-wrap;">Select a user and click Initialize GPU to stream setup output logs...</div>
+            </div>
         </div>
     </div>
 </div>
+
+<script>
+let initEventSource = null;
+
+function updateInitBtnState() {
+    const select = document.getElementById("init_user_select");
+    const initBtn = document.getElementById("start_init_btn");
+    const selectedOption = select.options[select.selectedIndex];
+    
+    if (selectedOption && selectedOption.value) {
+        const status = selectedOption.getAttribute("data-status");
+        if (status === "running") {
+            initBtn.disabled = true;
+            initBtn.innerText = "⏳ Init running...";
+        } else {
+            initBtn.disabled = false;
+            initBtn.innerText = "🚀 Initialize GPU";
+        }
+    } else {
+        initBtn.disabled = false;
+        initBtn.innerText = "🚀 Initialize GPU";
+    }
+}
+
+function startGPUInit() {
+    const username = document.getElementById("init_user_select").value;
+    if (!username) {
+        alert("Please select a user first.");
+        return;
+    }
+    
+    const consoleBox = document.getElementById("init_console");
+    const initBtn = document.getElementById("start_init_btn");
+    
+    // Clear console
+    consoleBox.innerText = `[Client] Connecting to GPU Init stream for ${username}...\n`;
+    initBtn.disabled = true;
+    initBtn.innerText = "⏳ Initializing...";
+    
+    if (initEventSource) {
+        initEventSource.close();
+    }
+    
+    initEventSource = new EventSource(`/admin/gpu/init-stream/${username}`);
+    
+    initEventSource.onmessage = function(event) {
+        consoleBox.innerText += event.data + "\n";
+        consoleBox.scrollTop = consoleBox.scrollHeight;
+        
+        if (event.data.includes("SUCCESSFUL") || event.data.includes("FAILED") || event.data.includes("Error:")) {
+            initEventSource.close();
+            initBtn.disabled = false;
+            initBtn.innerText = "🚀 Initialize GPU";
+        }
+    };
+    
+    initEventSource.onerror = function(err) {
+        consoleBox.innerText += "\n[Error] Connection closed or failed.\n";
+        consoleBox.scrollTop = consoleBox.scrollHeight;
+        initEventSource.close();
+        initBtn.disabled = false;
+        initBtn.innerText = "🚀 Initialize GPU";
+    };
+}
+</script>
 {% endblock %}

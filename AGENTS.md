@@ -20,6 +20,14 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 - Manage own session (start, stop, restart).
 - Grab secure token-based URL to access JupyterLab.
 
+### 4. GPU VM Spawning & Synchronization
+- **RunPod GPU VM Spawning**: Admin can assign a separate GPU VM to each user.
+- **Automated initialization**: Remote setup via SSH (apt packages, uv venv, JupyterLab installation, tmux session `gpu_{username}`).
+- **SSE progress streaming**: Live console feedback for both GPU initialization (admin console) and rsync progress (user console).
+- **GPU Init State Machine**: `NULL` -> `pending` -> `running` -> `ready` / `failed` / `stopped`.
+- **Manual Rsync Controls**: Replaced auto-rsync with manual "Sync To GPU" and "Sync From GPU" triggers on user dashboard to reduce sync complexity.
+- **Disk Logging**: Persistent logs under `{BASE_DIR}/.gpu_logs/` and `{BASE_DIR}/.rsync_logs/` with dedicated `/admin/logs` viewer.
+
 ---
 
 ## Technical Details
@@ -31,3 +39,4 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 Scripts available in `/scratch`:
 - `verify_hub.py`: Standard verification of spawner, db, and user flows.
 - `verify_admin_controls.py`: Verification of admin routes.
+- `verify_gpu.py`: Verification of GPU config assignment and rsync failures.

@@ -1,6 +1,8 @@
 import secrets
+import os
+from pathlib import Path
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import Signer, BadSignature
@@ -111,12 +113,10 @@ def admin_dashboard(request: Request, error: str = None, success: str = None, ad
             user_dict['jupyter_url'] = ""
         enriched_users.append(user_dict)
         
-    gpu_config = db.get_gpu_config()
-
     return templates.TemplateResponse(
         request=request,
         name="admin.html",
-        context={"user": admin_user, "users": enriched_users, "error": error, "success": success, "gpu_config": gpu_config}
+        context={"user": admin_user, "users": enriched_users, "error": error, "success": success}
     )
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -305,27 +305,6 @@ def user_restart_session(current_user=Depends(require_auth)):
     db.update_token(username, token)
     return RedirectResponse(url="/dashboard?success=JupyterLab+restarted", status_code=status.HTTP_303_SEE_OTHER)
 
-# --- Admin GPU Configuration ---
-
-@app.post("/admin/gpu/config")
-def admin_gpu_config(
-    request: Request,
-    ssh_host: str = Form(""),
-    ssh_port: int = Form(22),
-    ssh_user: str = Form("root"),
-    ssh_key_path: str = Form(""),
-    remote_base_dir: str = Form("/workspace"),
-    admin_user=Depends(require_admin)
-):
-    db.save_gpu_config(ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir)
-    return RedirectResponse(url="/admin?success=GPU+SSH+config+saved", status_code=status.HTTP_303_SEE_OTHER)
-
-@app.post("/admin/gpu/test")
-def admin_gpu_test(admin_user=Depends(require_admin)):
-    success, msg = gpu.test_gpu_ssh()
-    if success:
-        return RedirectResponse(url="/admin?success=GPU+SSH+connection+OK", status_code=status.HTTP_303_SEE_OTHER)
-    return RedirectResponse(url=f"/admin?error=GPU+SSH+test+failed", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.post("/admin/gpu/assign/{username}")
 def admin_gpu_assign(
@@ -342,47 +321,135 @@ def admin_gpu_assign(
     db.assign_gpu(username, gpu_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port)
     return RedirectResponse(url=f"/admin?success=GPU+assigned+to+{username}", status_code=status.HTTP_303_SEE_OTHER)
 
-# --- User GPU Access ---
+# --- GPU Management & Sync ---
 
-@app.post("/session/gpu")
-def user_access_gpu(current_user=Depends(require_auth)):
-    if current_user['role'] == 'admin':
-        return RedirectResponse(url="/admin")
-    
-    username = current_user['username']
+@app.get("/admin/gpu/init-stream/{username}")
+def admin_gpu_init_stream(username: str, admin_user=Depends(require_admin)):
     user = db.get_user_by_username(username)
-    
-    if not user['gpu_endpoint'] or not user['gpu_token']:
-        return RedirectResponse(url="/dashboard?error=No+GPU+session+assigned.+Contact+admin.", status_code=status.HTTP_303_SEE_OTHER)
-    
-    # Rsync user directory to GPU VM
-    success, msg = gpu.rsync_user_to_gpu(username)
-    if not success:
-        return RedirectResponse(url=f"/dashboard?error=GPU+sync+failed", status_code=status.HTTP_303_SEE_OTHER)
-    
-    # Build the GPU JupyterLab URL with token
-    gpu_url = user['gpu_endpoint']
-    separator = '&' if '?' in gpu_url else '?'
-    gpu_url = f"{gpu_url}{separator}token={user['gpu_token']}"
-    
-    return RedirectResponse(url=gpu_url, status_code=status.HTTP_303_SEE_OTHER)
-
-@app.post("/session/gpu/sync-back")
-def user_sync_back_gpu(current_user=Depends(require_auth)):
-    if current_user['role'] == 'admin':
-        return RedirectResponse(url="/admin")
-    
-    username = current_user['username']
-    user = db.get_user_by_username(username)
-    
-    if not user['gpu_endpoint'] or not user['gpu_token']:
-        return RedirectResponse(url="/dashboard?error=No+GPU+session+assigned.+Contact+admin.", status_code=status.HTTP_303_SEE_OTHER)
-    
-    success, msg = gpu.rsync_gpu_to_user(username)
-    if not success:
-        return RedirectResponse(url="/dashboard?error=GPU+sync+back+failed", status_code=status.HTTP_303_SEE_OTHER)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user['gpu_init_status'] == 'running':
+        def already_running():
+            yield "data: Error: Initialization already in progress\n\n"
+        return StreamingResponse(already_running(), media_type="text/event-stream")
         
-    return RedirectResponse(url="/dashboard?success=Synced+files+back+from+GPU+server", status_code=status.HTTP_303_SEE_OTHER)
+    ssh_host = user['gpu_ssh_host']
+    ssh_port = user['gpu_ssh_port'] or 22
+    gpu_conf = db.get_gpu_config()
+    
+    if not ssh_host or not gpu_conf['ssh_key_path']:
+        def not_configured():
+            yield "data: Error: GPU SSH not configured\n\n"
+        return StreamingResponse(not_configured(), media_type="text/event-stream")
+        
+    token = user['gpu_token']
+    if not token:
+        token = secrets.token_urlsafe(16)
+        db.assign_gpu(username, user['gpu_endpoint'], token, ssh_host, ssh_port)
+        
+    return StreamingResponse(
+        gpu.gpu_init_generator(
+            username=username,
+            host=ssh_host,
+            port=ssh_port,
+            key_path=gpu_conf['ssh_key_path'],
+            ssh_user=gpu_conf['ssh_user'],
+            token=token,
+            endpoint=user['gpu_endpoint']
+        ),
+        media_type="text/event-stream"
+    )
+
+@app.post("/admin/gpu/stop/{username}")
+def admin_stop_gpu(username: str, admin_user=Depends(require_admin)):
+    success, msg = gpu.stop_gpu_session(username)
+    if success:
+        return RedirectResponse(url=f"/admin?success=GPU+session+stopped+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=f"/admin?error={msg}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/admin/gpu/reset/{username}")
+def admin_reset_gpu(username: str, admin_user=Depends(require_admin)):
+    db.update_gpu_init_status(username, None)
+    return RedirectResponse(url=f"/admin?success=GPU+status+reset+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.get("/admin/logs", response_class=HTMLResponse)
+def admin_logs_page(request: Request, admin_user=Depends(require_admin)):
+    gpu_logs_dir = Path(config.BASE_DIR) / ".gpu_logs"
+    rsync_logs_dir = Path(config.BASE_DIR) / ".rsync_logs"
+    
+    logs = []
+    
+    if gpu_logs_dir.exists():
+        for f in os.listdir(gpu_logs_dir):
+            if f.endswith(".log"):
+                file_path = gpu_logs_dir / f
+                stat = file_path.stat()
+                logs.append({
+                    "name": f,
+                    "type": "gpu-init",
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime
+                })
+                
+    if rsync_logs_dir.exists():
+        for f in os.listdir(rsync_logs_dir):
+            if f.endswith(".log"):
+                file_path = rsync_logs_dir / f
+                stat = file_path.stat()
+                logs.append({
+                    "name": f,
+                    "type": "rsync-to" if "rsync-to" in f else "rsync-from",
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime
+                })
+                
+    logs.sort(key=lambda x: x["mtime"], reverse=True)
+    
+    return templates.TemplateResponse(
+        request=request,
+        name="logs.html",
+        context={"user": admin_user, "logs": logs}
+    )
+
+@app.get("/admin/logs/view")
+def admin_view_log(filename: str, admin_user=Depends(require_admin)):
+    if ".." in filename or filename.startswith("/") or filename.startswith("\\"):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+        
+    gpu_logs_dir = Path(config.BASE_DIR) / ".gpu_logs"
+    rsync_logs_dir = Path(config.BASE_DIR) / ".rsync_logs"
+    
+    file_path = gpu_logs_dir / filename
+    if not file_path.exists():
+        file_path = rsync_logs_dir / filename
+        
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Log file not found")
+        
+    with open(file_path, "r") as f:
+        content = f.read()
+        
+    return {"filename": filename, "content": content}
+
+@app.get("/session/gpu/sync-to-stream")
+def user_sync_to_stream(current_user=Depends(require_auth)):
+    if current_user['role'] == 'admin':
+        raise HTTPException(status_code=403, detail="Admins cannot sync workspaces")
+    username = current_user['username']
+    return StreamingResponse(
+        gpu.rsync_to_gpu_generator(username),
+        media_type="text/event-stream"
+    )
+
+@app.get("/session/gpu/sync-from-stream")
+def user_sync_from_stream(current_user=Depends(require_auth)):
+    if current_user['role'] == 'admin':
+        raise HTTPException(status_code=403, detail="Admins cannot sync workspaces")
+    username = current_user['username']
+    return StreamingResponse(
+        gpu.rsync_from_gpu_generator(username),
+        media_type="text/event-stream"
+    )
 
 # Catch redirection exceptions and map them to HTTP responses
 @app.exception_handler(HTTPException)

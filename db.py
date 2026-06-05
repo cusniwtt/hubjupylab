@@ -34,7 +34,7 @@ def init_db():
     conn.commit()
 
     # Add GPU columns to existing users table
-    for col in ["gpu_endpoint TEXT", "gpu_token TEXT", "gpu_ssh_host TEXT", "gpu_ssh_port INTEGER"]:
+    for col in ["gpu_endpoint TEXT", "gpu_token TEXT", "gpu_ssh_host TEXT", "gpu_ssh_port INTEGER", "gpu_init_status TEXT"]:
         try:
             cursor.execute(f"ALTER TABLE users ADD COLUMN {col}")
             conn.commit()
@@ -151,11 +151,17 @@ def save_gpu_config(ssh_host: str, ssh_port: int, ssh_user: str, ssh_key_path: s
     conn.close()
 
 def assign_gpu(username: str, gpu_endpoint: str, gpu_token: str, gpu_ssh_host: str, gpu_ssh_port: int):
+    user = get_user_by_username(username)
+    new_status = 'pending'
+    if user:
+        if user['gpu_ssh_host'] == gpu_ssh_host and user['gpu_ssh_port'] == gpu_ssh_port and user['gpu_init_status']:
+            new_status = user['gpu_init_status']
+
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET gpu_endpoint = ?, gpu_token = ?, gpu_ssh_host = ?, gpu_ssh_port = ? WHERE username = ?",
-        (gpu_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port, username)
+        "UPDATE users SET gpu_endpoint = ?, gpu_token = ?, gpu_ssh_host = ?, gpu_ssh_port = ?, gpu_init_status = ? WHERE username = ?",
+        (gpu_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port, new_status, username)
     )
     conn.commit()
     conn.close()
@@ -164,8 +170,18 @@ def unassign_gpu(username: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET gpu_endpoint = NULL, gpu_token = NULL, gpu_ssh_host = NULL, gpu_ssh_port = NULL WHERE username = ?",
+        "UPDATE users SET gpu_endpoint = NULL, gpu_token = NULL, gpu_ssh_host = NULL, gpu_ssh_port = NULL, gpu_init_status = NULL WHERE username = ?",
         (username,)
+    )
+    conn.commit()
+    conn.close()
+
+def update_gpu_init_status(username: str, status: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET gpu_init_status = ? WHERE username = ?",
+        (status, username)
     )
     conn.commit()
     conn.close()
