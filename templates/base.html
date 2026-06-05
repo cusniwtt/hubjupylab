@@ -19,6 +19,9 @@
         </div>
         {% if user %}
         <div class="nav-user">
+            {% if user.role == 'admin' %}
+            <button onclick="openCreateUserModal()" class="btn btn-primary btn-sm" style="margin-right: 0.5rem;">＋ Create User</button>
+            {% endif %}
             <span>Logged in as: <strong>{{ user.username }}</strong> ({{ user.role }})</span>
             <a href="/logout" class="btn btn-outline btn-sm">Logout</a>
         </div>
