@@ -3,56 +3,67 @@
 {% block title %}User Dashboard - HubJupyLab{% endblock %}
 
 {% block content %}
-<div class="user-card card">
-    <div class="status-section">
-        <div>
-            <h2 style="font-size: 1.5rem; margin-bottom: 0.25rem;">Your JupyterLab Server</h2>
-            <p style="font-size: 0.875rem; color: var(--text-secondary);">Port Assignment: <code>{{ user_port }}</code></p>
+<div class="user-card card" x-data="dashboardState()">
+    <div id="server-status-container">
+        <div class="status-section">
+            <div>
+                <h2 style="font-size: 1.5rem; margin-bottom: 0.25rem;">Your JupyterLab Server</h2>
+                <p style="font-size: 0.875rem; color: var(--text-secondary);">Port Assignment: <code>{{ user_port }}</code></p>
+            </div>
+            <div>
+                {% if is_running %}
+                <span class="badge badge-running" style="font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟢 Running</span>
+                {% else %}
+                <span class="badge badge-stopped" style="font-size: 0.875rem; padding: 0.4rem 0.8rem;">🔴 Stopped</span>
+                {% endif %}
+            </div>
         </div>
-        <div>
-            {% if is_running %}
-            <span class="badge badge-running" style="font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟢 Running</span>
+
+        {% if is_running and jupyter_url %}
+        <div style="margin-bottom: 1.5rem;">
+            <label style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Click URL to access JupyterLab:</label>
+            <div class="jupyter-url-box">
+                <code id="jupyterUrl">{{ jupyter_url }}</code>
+                <button @click="copyToClipboard()" class="copy-btn" title="Copy to clipboard">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                </button>
+            </div>
+            <a href="{{ jupyter_url }}" target="_blank" class="btn btn-primary" style="text-decoration: none;">
+                Open JupyterLab ↗
+            </a>
+        </div>
+        {% else %}
+        <div class="jupyter-url-box" style="justify-content: center; padding: 2rem; margin-bottom: 1.5rem;">
+            <p style="color: var(--text-secondary); text-align: center;">JupyterLab server is stopped. Click Start to boot up your instance.</p>
+        </div>
+        {% endif %}
+
+        <div class="controls-section">
+            {% if not is_running %}
+            <button hx-post="/session/start" 
+                    hx-target="#server-status-container" 
+                    hx-swap="innerHTML" 
+                    class="btn btn-primary" style="flex: 1;">
+                <span class="htmx-indicator spinner"></span>Start Server
+            </button>
             {% else %}
-            <span class="badge badge-stopped" style="font-size: 0.875rem; padding: 0.4rem 0.8rem;">🔴 Stopped</span>
+            <button hx-post="/session/restart" 
+                    hx-target="#server-status-container" 
+                    hx-swap="innerHTML" 
+                    class="btn btn-outline" style="flex: 1;">
+                <span class="htmx-indicator spinner"></span>Restart Server
+            </button>
+            <button hx-post="/session/stop" 
+                    hx-target="#server-status-container" 
+                    hx-swap="innerHTML" 
+                    class="btn btn-danger" style="flex: 1;">
+                <span class="htmx-indicator spinner"></span>Stop Server
+            </button>
             {% endif %}
         </div>
-    </div>
-
-    {% if is_running and jupyter_url %}
-    <div style="margin-bottom: 1.5rem;">
-        <label style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Click URL to access JupyterLab:</label>
-        <div class="jupyter-url-box">
-            <code id="jupyterUrl">{{ jupyter_url }}</code>
-            <button onclick="copyToClipboard()" class="copy-btn" title="Copy to clipboard">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-            </button>
-        </div>
-        <a href="{{ jupyter_url }}" target="_blank" class="btn btn-primary" style="text-decoration: none;">
-            Open JupyterLab ↗
-        </a>
-    </div>
-    {% else %}
-    <div class="jupyter-url-box" style="justify-content: center; padding: 2rem; margin-bottom: 1.5rem;">
-        <p style="color: var(--text-secondary); text-align: center;">JupyterLab server is stopped. Click Start to boot up your instance.</p>
-    </div>
-    {% endif %}
-
-    <div class="controls-section">
-        {% if not is_running %}
-        <form action="/session/start" method="POST" style="flex: 1;">
-            <button type="submit" class="btn btn-primary" style="width: 100%;">Start Server</button>
-        </form>
-        {% else %}
-        <form action="/session/restart" method="POST" style="flex: 1;">
-            <button type="submit" class="btn btn-outline" style="width: 100%;">Restart Server</button>
-        </form>
-        <form action="/session/stop" method="POST" style="flex: 1;">
-            <button type="submit" class="btn btn-danger" style="width: 100%;">Stop Server</button>
-        </form>
-        {% endif %}
     </div>
 
     {% if has_gpu %}
@@ -91,16 +102,20 @@
             </div>
             
             <div class="form-group" style="margin-bottom: 0.5rem; width: 100%;">
-                <label for="sync_subpath" style="display: block; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Sync subpath only (optional):</label>
+                <label for="sync_subpath" style="display: block; font-size: 0.8, font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Sync subpath only (optional):</label>
                 <input type="text" id="sync_subpath" name="sync_subpath" class="form-control" placeholder="e.g. data (leave blank to sync all)" style="font-size: 0.85rem; padding: 0.4rem 0.8rem; width: 100%;">
             </div>
 
             <div style="display: flex; gap: 1rem;">
-                <button onclick="syncToGPU()" class="btn btn-outline" style="flex: 1; font-weight: 500;">
-                    📤 Sync To GPU
+                <button :disabled="syncing" @click="syncToGPU($data)" class="btn btn-outline" style="flex: 1; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                    <span class="spinner" x-show="syncing" style="margin-right: 0;"></span>
+                    <span x-show="!syncing">📤 Sync To GPU</span>
+                    <span x-show="syncing">Syncing...</span>
                 </button>
-                <button onclick="syncFromGPU()" class="btn btn-outline" style="flex: 1; font-weight: 500;">
-                    📥 Sync From GPU
+                <button :disabled="syncing" @click="syncFromGPU($data)" class="btn btn-outline" style="flex: 1; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                    <span class="spinner" x-show="syncing" style="margin-right: 0;"></span>
+                    <span x-show="!syncing">📥 Sync From GPU</span>
+                    <span x-show="syncing">Syncing...</span>
                 </button>
             </div>
             
@@ -112,18 +127,24 @@
 </div>
 
 <script>
-function copyToClipboard() {
-    var urlText = document.getElementById("jupyterUrl").innerText;
-    navigator.clipboard.writeText(urlText).then(function() {
-        alert("JupyterLab URL copied to clipboard!");
-    }, function(err) {
-        console.error('Could not copy text: ', err);
-    });
+function dashboardState() {
+    return {
+        syncing: false,
+        copyToClipboard() {
+            var urlText = document.getElementById("jupyterUrl").innerText;
+            navigator.clipboard.writeText(urlText).then(() => {
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: "JupyterLab URL copied to clipboard!", type: "success" } }));
+            }, (err) => {
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: "Could not copy text to clipboard.", type: "error" } }));
+            });
+        }
+    }
 }
 
 let syncEventSource = null;
 
-function runSync(endpoint, actionName) {
+function runSync(endpoint, actionName, alpineComponent) {
+    alpineComponent.syncing = true;
     const consoleBox = document.getElementById("sync_console");
     consoleBox.style.display = "block";
     consoleBox.innerText = `[Client] Connecting to ${actionName} stream...\n`;
@@ -141,6 +162,7 @@ function runSync(endpoint, actionName) {
         
         if (event.data.includes("SUCCESS") || event.data.includes("failed") || event.data.includes("Error:")) {
             syncEventSource.close();
+            alpineComponent.syncing = false;
         }
     };
     
@@ -148,17 +170,18 @@ function runSync(endpoint, actionName) {
         consoleBox.innerText += "\n[Error] Sync stream disconnected.\n";
         consoleBox.scrollTop = consoleBox.scrollHeight;
         syncEventSource.close();
+        alpineComponent.syncing = false;
     };
 }
 
-function syncToGPU() {
+function syncToGPU(alpineComponent) {
     const path = encodeURIComponent(document.getElementById("sync_subpath").value.trim());
-    runSync(`/session/gpu/sync-to-stream?path=${path}`, "Sync to GPU");
+    runSync(`/session/gpu/sync-to-stream?path=${path}`, "Sync to GPU", alpineComponent);
 }
 
-function syncFromGPU() {
+function syncFromGPU(alpineComponent) {
     const path = encodeURIComponent(document.getElementById("sync_subpath").value.trim());
-    runSync(`/session/gpu/sync-from-stream?path=${path}`, "Sync from GPU");
+    runSync(`/session/gpu/sync-from-stream?path=${path}`, "Sync from GPU", alpineComponent);
 }
 </script>
 {% endblock %}

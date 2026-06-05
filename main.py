@@ -1,7 +1,7 @@
 import secrets
 import os
 from pathlib import Path
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -96,6 +96,46 @@ def logout():
     response.delete_cookie("hub_session")
     return response
 
+def _build_admin_user_context(username: str, request: Request = None):
+    user = db.get_user_by_username(username)
+    if not user:
+        return None
+    user_dict = dict(user)
+    user_dict['is_running'] = spawner.is_session_running(username)
+    if user_dict['is_running'] and user['token']:
+        host_ip = config.HOST_IP
+        if not host_ip:
+            host_ip = request.base_url.hostname if request else "127.0.0.1"
+        user_dict['jupyter_url'] = f"http://{host_ip}:{user['port']}/lab?token={user['token']}"
+    else:
+        user_dict['jupyter_url'] = ""
+    return user_dict
+
+def _get_enriched_users(request: Request = None):
+    users_list = db.list_users()
+    enriched_users = []
+    host_ip = config.HOST_IP
+    if not host_ip:
+        host_ip = request.base_url.hostname if request else "127.0.0.1"
+    for u in users_list:
+        user_dict = dict(u)
+        user_dict['is_running'] = spawner.is_session_running(u['username'])
+        if user_dict['is_running'] and u['token']:
+            user_dict['jupyter_url'] = f"http://{host_ip}:{u['port']}/lab?token={u['token']}"
+        else:
+            user_dict['jupyter_url'] = ""
+        enriched_users.append(user_dict)
+    return enriched_users
+
+@app.get("/admin/partials/gpu-select")
+def admin_gpu_select_partial(request: Request, admin_user=Depends(require_admin)):
+    users = db.list_users()
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/_admin_gpu_select.html",
+        context={"users": users}
+    )
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_dashboard(request: Request, error: str = None, success: str = None, admin_user=Depends(require_admin)):
     users_list = db.list_users()
@@ -154,29 +194,55 @@ def user_dashboard(request: Request, error: str = None, success: str = None, cur
 
 @app.post("/admin/users")
 def admin_create_user(
-    request: Request,
     username: str = Form(...),
     password: str = Form(...),
+    request: Request = None,
     admin_user=Depends(require_admin)
 ):
     # Validate username length/charset
     if not username.isalnum() and "_" not in username and "-" not in username:
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=422)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "Username must be alphanumeric", "type": "error"}}'
+            return response
         return RedirectResponse(url="/admin?error=Username+must+be+alphanumeric", status_code=status.HTTP_303_SEE_OTHER)
         
     port = spawner.get_next_port()
     if not port:
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=422)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "No available ports left (limit 9)", "type": "error"}}'
+            return response
         return RedirectResponse(url="/admin?error=No+available+ports+left+(limit+9)", status_code=status.HTTP_303_SEE_OTHER)
         
     # Attempt to create in DB
     created = db.create_user(username, password, role='user', port=port)
     if not created:
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=422)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "Username already exists", "type": "error"}}'
+            return response
         return RedirectResponse(url="/admin?error=Username+already+exists", status_code=status.HTTP_303_SEE_OTHER)
         
     # Setup venv in background/sync
     success = spawner.setup_user_env(username)
     if not success:
         db.delete_user(username)
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=422)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "Failed to initialize venv for user", "type": "error"}}'
+            return response
         return RedirectResponse(url="/admin?error=Failed+to+initialize+venv+for+user", status_code=status.HTTP_303_SEE_OTHER)
+        
+    if request and request.headers.get("HX-Request") == "true":
+        enriched = _get_enriched_users(request)
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_admin_user_table_body.html",
+            context={"users": enriched}
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "Created user ' + username + '", "type": "success"}, "userListUpdated": null}'
+        return response
         
     return RedirectResponse(url=f"/admin?success=Created+user+{username}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -184,6 +250,7 @@ def admin_create_user(
 def admin_delete_user(
     username: str,
     delete_files: str = Form(None),
+    request: Request = None,
     admin_user=Depends(require_admin)
 ):
     # 1. Stop session
@@ -192,21 +259,31 @@ def admin_delete_user(
     # 2. Optionally delete files
     if delete_files == "true":
         spawner.cleanup_user_files(username)
-        msg = f"Deleted+user+{username}+and+all+files"
+        msg = f"Deleted user {username} and all files"
     else:
-        msg = f"Deleted+user+{username}+(files+preserved)"
+        msg = f"Deleted user {username} (files preserved)"
         
     # 3. Delete from DB
     db.delete_user(username)
     
-    return RedirectResponse(url=f"/admin?success={msg}", status_code=status.HTTP_303_SEE_OTHER)
+    if request and request.headers.get("HX-Request") == "true":
+        response = Response(content="")
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "' + msg + '", "type": "success"}, "userListUpdated": null}'
+        return response
+        
+    import urllib.parse
+    return RedirectResponse(url=f"/admin?success={urllib.parse.quote_plus(msg)}", status_code=status.HTTP_303_SEE_OTHER)
 
 # --- Admin Session Controls ---
 
 @app.post("/admin/session/start/{username}")
-def admin_start_session(username: str, admin_user=Depends(require_admin)):
+def admin_start_session(username: str, request: Request = None, admin_user=Depends(require_admin)):
     user = db.get_user_by_username(username)
     if not user:
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=404)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "User not found", "type": "error"}}'
+            return response
         return RedirectResponse(url="/admin?error=User+not+found", status_code=status.HTTP_303_SEE_OTHER)
         
     port = user['port']
@@ -214,28 +291,66 @@ def admin_start_session(username: str, admin_user=Depends(require_admin)):
     
     success = spawner.spawn_session(username, port, token)
     if not success:
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=500)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "Failed to start session for ' + username + '", "type": "error"}}'
+            return response
         return RedirectResponse(url=f"/admin?error=Failed+to+start+session+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
         
     db.update_token(username, token)
+    
+    if request and request.headers.get("HX-Request") == "true":
+        enriched = _build_admin_user_context(username, request)
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_admin_user_row.html",
+            context={"u": enriched}
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "JupyterLab started for ' + username + '", "type": "success"}}'
+        return response
+        
     return RedirectResponse(url=f"/admin?success=JupyterLab+started+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.post("/admin/session/stop/{username}")
-def admin_stop_session(username: str, admin_user=Depends(require_admin)):
+def admin_stop_session(username: str, request: Request = None, admin_user=Depends(require_admin)):
     user = db.get_user_by_username(username)
     if not user:
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=404)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "User not found", "type": "error"}}'
+            return response
         return RedirectResponse(url="/admin?error=User+not+found", status_code=status.HTTP_303_SEE_OTHER)
         
     success = spawner.stop_session(username)
     if not success:
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=500)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "Failed to stop session for ' + username + '", "type": "error"}}'
+            return response
         return RedirectResponse(url=f"/admin?error=Failed+to+stop+session+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
         
     db.update_token(username, None)
+    
+    if request and request.headers.get("HX-Request") == "true":
+        enriched = _build_admin_user_context(username, request)
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_admin_user_row.html",
+            context={"u": enriched}
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "JupyterLab stopped for ' + username + '", "type": "success"}}'
+        return response
+        
     return RedirectResponse(url=f"/admin?success=JupyterLab+stopped+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.post("/admin/session/restart/{username}")
-def admin_restart_session(username: str, admin_user=Depends(require_admin)):
+def admin_restart_session(username: str, request: Request = None, admin_user=Depends(require_admin)):
     user = db.get_user_by_username(username)
     if not user:
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=404)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "User not found", "type": "error"}}'
+            return response
         return RedirectResponse(url="/admin?error=User+not+found", status_code=status.HTTP_303_SEE_OTHER)
         
     port = user['port']
@@ -247,51 +362,130 @@ def admin_restart_session(username: str, admin_user=Depends(require_admin)):
     success = spawner.spawn_session(username, port, token)
     if not success:
         db.update_token(username, None)
+        if request and request.headers.get("HX-Request") == "true":
+            response = Response(status_code=500)
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "Failed to restart session for ' + username + '", "type": "error"}}'
+            return response
         return RedirectResponse(url=f"/admin?error=Failed+to+restart+session+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
         
     db.update_token(username, token)
+    
+    if request and request.headers.get("HX-Request") == "true":
+        enriched = _build_admin_user_context(username, request)
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_admin_user_row.html",
+            context={"u": enriched}
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "JupyterLab restarted for ' + username + '", "type": "success"}}'
+        return response
+        
     return RedirectResponse(url=f"/admin?success=JupyterLab+restarted+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
 
 # --- User Session Controls ---
 
 @app.post("/session/start")
-def user_start_session(current_user=Depends(require_auth)):
+def user_start_session(request: Request, current_user=Depends(require_auth)):
     if current_user['role'] == 'admin':
         return RedirectResponse(url="/admin")
         
     username = current_user['username']
     port = current_user['port']
+    host_ip = config.HOST_IP if config.HOST_IP else request.base_url.hostname
     
     # Generate new token
     token = secrets.token_urlsafe(16)
     
     success = spawner.spawn_session(username, port, token)
     if not success:
+        if request.headers.get("HX-Request") == "true":
+            is_running = spawner.is_session_running(username)
+            jupyter_url = ""
+            if is_running and current_user['token']:
+                jupyter_url = f"http://{host_ip}:{port}/lab?token={current_user['token']}"
+            response = templates.TemplateResponse(
+                request=request,
+                name="partials/_dashboard_status.html",
+                context={
+                    "is_running": is_running,
+                    "user_port": port,
+                    "jupyter_url": jupyter_url
+                }
+            )
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "Failed to start JupyterLab session", "type": "error"}}'
+            return response
         return RedirectResponse(url="/dashboard?error=Failed+to+start+JupyterLab+session", status_code=status.HTTP_303_SEE_OTHER)
         
     db.update_token(username, token)
+    
+    if request.headers.get("HX-Request") == "true":
+        jupyter_url = f"http://{host_ip}:{port}/lab?token={token}"
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_dashboard_status.html",
+            context={
+                "is_running": True,
+                "user_port": port,
+                "jupyter_url": jupyter_url
+            }
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "JupyterLab started", "type": "success"}}'
+        return response
     return RedirectResponse(url="/dashboard?success=JupyterLab+started", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.post("/session/stop")
-def user_stop_session(current_user=Depends(require_auth)):
-    if current_user['role'] == 'admin':
-        return RedirectResponse(url="/admin")
-        
-    username = current_user['username']
-    success = spawner.stop_session(username)
-    if not success:
-        return RedirectResponse(url="/dashboard?error=Failed+to+stop+JupyterLab+session", status_code=status.HTTP_303_SEE_OTHER)
-        
-    db.update_token(username, None)
-    return RedirectResponse(url="/dashboard?success=JupyterLab+stopped", status_code=status.HTTP_303_SEE_OTHER)
-
-@app.post("/session/restart")
-def user_restart_session(current_user=Depends(require_auth)):
+def user_stop_session(request: Request, current_user=Depends(require_auth)):
     if current_user['role'] == 'admin':
         return RedirectResponse(url="/admin")
         
     username = current_user['username']
     port = current_user['port']
+    host_ip = config.HOST_IP if config.HOST_IP else request.base_url.hostname
+    
+    success = spawner.stop_session(username)
+    if not success:
+        if request.headers.get("HX-Request") == "true":
+            is_running = spawner.is_session_running(username)
+            jupyter_url = ""
+            if is_running and current_user['token']:
+                jupyter_url = f"http://{host_ip}:{port}/lab?token={current_user['token']}"
+            response = templates.TemplateResponse(
+                request=request,
+                name="partials/_dashboard_status.html",
+                context={
+                    "is_running": is_running,
+                    "user_port": port,
+                    "jupyter_url": jupyter_url
+                }
+            )
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "Failed to stop JupyterLab session", "type": "error"}}'
+            return response
+        return RedirectResponse(url="/dashboard?error=Failed+to+stop+JupyterLab+session", status_code=status.HTTP_303_SEE_OTHER)
+        
+    db.update_token(username, None)
+    
+    if request.headers.get("HX-Request") == "true":
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_dashboard_status.html",
+            context={
+                "is_running": False,
+                "user_port": port,
+                "jupyter_url": ""
+            }
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "JupyterLab stopped", "type": "success"}}'
+        return response
+    return RedirectResponse(url="/dashboard?success=JupyterLab+stopped", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/session/restart")
+def user_restart_session(request: Request, current_user=Depends(require_auth)):
+    if current_user['role'] == 'admin':
+        return RedirectResponse(url="/admin")
+        
+    username = current_user['username']
+    port = current_user['port']
+    host_ip = config.HOST_IP if config.HOST_IP else request.base_url.hostname
     token = secrets.token_urlsafe(16)
     
     # Stop first
@@ -300,15 +494,42 @@ def user_restart_session(current_user=Depends(require_auth)):
     success = spawner.spawn_session(username, port, token)
     if not success:
         db.update_token(username, None)
+        if request.headers.get("HX-Request") == "true":
+            response = templates.TemplateResponse(
+                request=request,
+                name="partials/_dashboard_status.html",
+                context={
+                    "is_running": False,
+                    "user_port": port,
+                    "jupyter_url": ""
+                }
+            )
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "Failed to restart JupyterLab session", "type": "error"}}'
+            return response
         return RedirectResponse(url="/dashboard?error=Failed+to+restart+JupyterLab+session", status_code=status.HTTP_303_SEE_OTHER)
         
     db.update_token(username, token)
+    
+    if request.headers.get("HX-Request") == "true":
+        jupyter_url = f"http://{host_ip}:{port}/lab?token={token}"
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_dashboard_status.html",
+            context={
+                "is_running": True,
+                "user_port": port,
+                "jupyter_url": jupyter_url
+            }
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "JupyterLab restarted", "type": "success"}}'
+        return response
     return RedirectResponse(url="/dashboard?success=JupyterLab+restarted", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/admin/gpu/assign/{username}")
 def admin_gpu_assign(
     username: str,
+    request: Request = None,
     gpu_ssh_host: str = Form(""),
     gpu_ssh_port: int = Form(22),
     gpu_endpoint: str = Form(""),
@@ -317,8 +538,26 @@ def admin_gpu_assign(
 ):
     if not gpu_endpoint:
         db.unassign_gpu(username)
+        if request and request.headers.get("HX-Request") == "true":
+            enriched = _build_admin_user_context(username, request)
+            response = templates.TemplateResponse(
+                request=request,
+                name="partials/_admin_user_row.html",
+                context={"u": enriched}
+            )
+            response.headers["HX-Trigger"] = '{"showToast": {"message": "GPU access removed for ' + username + '", "type": "success"}, "userListUpdated": null}'
+            return response
         return RedirectResponse(url=f"/admin?success=GPU+access+removed+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
     db.assign_gpu(username, gpu_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port)
+    if request and request.headers.get("HX-Request") == "true":
+        enriched = _build_admin_user_context(username, request)
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_admin_user_row.html",
+            context={"u": enriched}
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "GPU assigned to ' + username + '", "type": "success"}, "userListUpdated": null}'
+        return response
     return RedirectResponse(url=f"/admin?success=GPU+assigned+to+{username}", status_code=status.HTTP_303_SEE_OTHER)
 
 # --- GPU Management & Sync ---
@@ -361,15 +600,35 @@ def admin_gpu_init_stream(username: str, admin_user=Depends(require_admin)):
     )
 
 @app.post("/admin/gpu/stop/{username}")
-def admin_stop_gpu(username: str, admin_user=Depends(require_admin)):
+def admin_stop_gpu(username: str, request: Request = None, admin_user=Depends(require_admin)):
     success, msg = gpu.stop_gpu_session(username)
+    if request and request.headers.get("HX-Request") == "true":
+        enriched = _build_admin_user_context(username, request)
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_admin_user_row.html",
+            context={"u": enriched}
+        )
+        toast_type = "success" if success else "error"
+        toast_msg = f"GPU session stopped for {username}" if success else msg
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "' + toast_msg + '", "type": "' + toast_type + '"}}'
+        return response
     if success:
         return RedirectResponse(url=f"/admin?success=GPU+session+stopped+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
     return RedirectResponse(url=f"/admin?error={msg}", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.post("/admin/gpu/reset/{username}")
-def admin_reset_gpu(username: str, admin_user=Depends(require_admin)):
+def admin_reset_gpu(username: str, request: Request = None, admin_user=Depends(require_admin)):
     db.update_gpu_init_status(username, None)
+    if request and request.headers.get("HX-Request") == "true":
+        enriched = _build_admin_user_context(username, request)
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_admin_user_row.html",
+            context={"u": enriched}
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "GPU status reset for ' + username + '", "type": "success"}, "userListUpdated": null}'
+        return response
     return RedirectResponse(url=f"/admin?success=GPU+status+reset+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/admin/logs", response_class=HTMLResponse)

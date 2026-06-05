@@ -1,0 +1,8 @@
+<select id="init_user_select" class="form-control" style="background: #0f172a; color: var(--text-primary);" onchange="updateInitBtnState()">
+    <option value="">-- Select User --</option>
+    {% for u in users %}
+        {% if u.gpu_ssh_host %}
+            <option value="{{ u.username }}" data-status="{{ u.gpu_init_status or '' }}">{{ u.username }} ({% if u.gpu_init_status %}{{ u.gpu_init_status }}{% else %}pending{% endif %})</option>
+        {% endif %}
+    {% endfor %}
+</select>

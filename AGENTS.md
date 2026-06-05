@@ -26,7 +26,13 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 - **SSE progress streaming**: Live console feedback for both GPU initialization (admin console) and rsync progress (user console).
 - **GPU Init State Machine**: `NULL` -> `pending` -> `running` -> `ready` / `failed` / `stopped`.
 - **Manual Rsync Controls**: Replaced auto-rsync with manual "Sync To GPU" and "Sync From GPU" triggers on user dashboard to reduce sync complexity.
-- **Disk Logging**: Persistent logs under `{BASE_DIR}/.gpu_logs/` and `{BASE_DIR}/.rsync_logs/` with dedicated `/admin/logs` viewer.
+- Disk Logging: Persistent logs under `{BASE_DIR}/.gpu_logs/` and `{BASE_DIR}/.rsync_logs/` with dedicated `/admin/logs` viewer.
+
+### 5. Interactive UI (HTMX & Alpine.js)
+- **Zero Page Reloads**: Migrated user and admin dashboards to perform partial page swaps using [HTMX](file:///home/hubjupylab/hubjupylab/static/vendor/htmx.min.js) and [Alpine.js](file:///home/hubjupylab/hubjupylab/static/vendor/alpine.min.js).
+- **Inline Controls**: Supports real-time session start, stop, restart updates with button dimming/loading spinner transitions.
+- **Form Modal & Event Swaps**: Create user modal form closes dynamically on success and resets; GPU init dropdown select options sync reactively using custom `userListUpdated` HTMX body event trigger.
+- **Global Toasts**: Custom `HX-Trigger` HTTP header parsing displays success/error toasts.
 
 ---
 
@@ -36,7 +42,9 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 - **Starlette TemplateResponse**: Position-independent keyword call style (`request=request, name=name, context=context`) prevents signature exceptions.
 
 ## Verification
-Scripts available in `/scratch`:
-- `verify_hub.py`: Standard verification of spawner, db, and user flows.
-- `verify_admin_controls.py`: Verification of admin routes.
-- `verify_gpu.py`: Verification of GPU config assignment and rsync failures.
+Scripts available in [/scratch](file:///home/hubjupylab/hubjupylab/scratch):
+- [verify_hub.py](file:///home/hubjupylab/hubjupylab/scratch/verify_hub.py): Standard verification of spawner, db, and user flows.
+- [verify_admin_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_admin_controls.py): Verification of admin routes.
+- [verify_gpu.py](file:///home/hubjupylab/hubjupylab/scratch/verify_gpu.py): Verification of GPU config assignment and rsync failures.
+- [verify_htmx_user_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_htmx_user_controls.py): Verification of user dashboard HTMX endpoints.
+- [verify_htmx_admin_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_htmx_admin_controls.py): Verification of admin dashboard HTMX endpoints.

@@ -101,7 +101,7 @@ def get_user_by_username(username: str):
 def list_users():
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE role != 'admin' ORDER BY username ASC")
+    cursor.execute("SELECT * FROM users WHERE role != 'admin' ORDER BY port ASC")
     users = cursor.fetchall()
     conn.close()
     return users

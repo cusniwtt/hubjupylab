@@ -10,6 +10,7 @@ HubJupyLab is a lightweight JupyterLab Hub designed for small teams (up to 9 use
 - **Token-Auth Security**: Generates unique, secure access tokens for each JupyterLab session.
 - **Clean Admin Dashboard**: Create/delete users, start/stop/restart any user's session, see server status, and optionally clean up user files.
 - **User Dashboard**: Users can start, stop, restart, and copy their JupyterLab endpoint URL.
+- **Modern Interactive UI**: Powered by [HTMX](file:///home/hubjupylab/hubjupylab/static/vendor/htmx.min.js) and [Alpine.js](file:///home/hubjupylab/hubjupylab/static/vendor/alpine.min.js) for zero page reloads, live controls, inline form/dropdown updates, and global toast alerts.
 
 ---
 
