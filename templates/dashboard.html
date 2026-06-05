@@ -90,6 +90,11 @@
                 {% endif %}
             </div>
             
+            <div class="form-group" style="margin-bottom: 0.5rem; width: 100%;">
+                <label for="sync_subpath" style="display: block; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Sync subpath only (optional):</label>
+                <input type="text" id="sync_subpath" name="sync_subpath" class="form-control" placeholder="e.g. data (leave blank to sync all)" style="font-size: 0.85rem; padding: 0.4rem 0.8rem; width: 100%;">
+            </div>
+
             <div style="display: flex; gap: 1rem;">
                 <button onclick="syncToGPU()" class="btn btn-outline" style="flex: 1; font-weight: 500;">
                     📤 Sync To GPU
@@ -147,11 +152,13 @@ function runSync(endpoint, actionName) {
 }
 
 function syncToGPU() {
-    runSync("/session/gpu/sync-to-stream", "Sync to GPU");
+    const path = encodeURIComponent(document.getElementById("sync_subpath").value.trim());
+    runSync(`/session/gpu/sync-to-stream?path=${path}`, "Sync to GPU");
 }
 
 function syncFromGPU() {
-    runSync("/session/gpu/sync-from-stream", "Sync from GPU");
+    const path = encodeURIComponent(document.getElementById("sync_subpath").value.trim());
+    runSync(`/session/gpu/sync-from-stream?path=${path}`, "Sync from GPU");
 }
 </script>
 {% endblock %}

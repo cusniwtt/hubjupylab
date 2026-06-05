@@ -432,22 +432,22 @@ def admin_view_log(filename: str, admin_user=Depends(require_admin)):
     return {"filename": filename, "content": content}
 
 @app.get("/session/gpu/sync-to-stream")
-def user_sync_to_stream(current_user=Depends(require_auth)):
+def user_sync_to_stream(path: str = "", current_user=Depends(require_auth)):
     if current_user['role'] == 'admin':
         raise HTTPException(status_code=403, detail="Admins cannot sync workspaces")
     username = current_user['username']
     return StreamingResponse(
-        gpu.rsync_to_gpu_generator(username),
+        gpu.rsync_to_gpu_generator(username, subpath=path),
         media_type="text/event-stream"
     )
 
 @app.get("/session/gpu/sync-from-stream")
-def user_sync_from_stream(current_user=Depends(require_auth)):
+def user_sync_from_stream(path: str = "", current_user=Depends(require_auth)):
     if current_user['role'] == 'admin':
         raise HTTPException(status_code=403, detail="Admins cannot sync workspaces")
     username = current_user['username']
     return StreamingResponse(
-        gpu.rsync_from_gpu_generator(username),
+        gpu.rsync_from_gpu_generator(username, subpath=path),
         media_type="text/event-stream"
     )
 

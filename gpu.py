@@ -173,8 +173,8 @@ def gpu_init_generator(username: str, host: str, port: int, key_path: str, ssh_u
         db.update_gpu_init_status(username, 'ready')
         yield log_and_yield("Initialization SUCCESSFUL! GPU JupyterLab is now running.")
 
-def rsync_to_gpu_generator(username: str):
-    """Generator that runs rsync to upload workspace to GPU VM."""
+def rsync_to_gpu_generator(username: str, subpath: str = ""):
+    """Generator that runs rsync to upload workspace to GPU VM with optional subpath validation."""
     now_tz7 = datetime.now(timezone(timedelta(hours=7)))
     timestamp = now_tz7.strftime("%Y%m%d-%H%M%S")
     log_dir = Path(config.BASE_DIR) / ".rsync_logs"
@@ -198,7 +198,23 @@ def rsync_to_gpu_generator(username: str):
         yield "data: Error: User directory not found\n\n"
         return
 
-    remote_path = f"{SSH_USER}@{ssh_host}:{REMOTE_BASE_DIR}/{username}/"
+    # Validate subpath is strictly within user_dir
+    if subpath:
+        target_dir = (user_dir / subpath).resolve()
+        resolved_user_dir = user_dir.resolve()
+        if resolved_user_dir not in [target_dir] + list(target_dir.parents):
+            yield "data: Error: Path escapes user directory\n\n"
+            return
+        if not target_dir.exists() or not target_dir.is_dir():
+            yield f"data: Error: Local directory '{subpath}' not found\n\n"
+            return
+        sync_sub = subpath.strip("/")
+    else:
+        target_dir = user_dir
+        sync_sub = ""
+
+    local_path = str(target_dir) + "/"
+    remote_path = f"{SSH_USER}@{ssh_host}:{REMOTE_BASE_DIR}/{username}/{sync_sub}/"
 
     # Pre-create remote directory via ssh
     mkdir_cmd = [
@@ -206,7 +222,7 @@ def rsync_to_gpu_generator(username: str):
         "-i", SSH_KEY_PATH,
         "-o", "StrictHostKeyChecking=no",
         f"{SSH_USER}@{ssh_host}",
-        f"mkdir -p {REMOTE_BASE_DIR}/{username}/"
+        f"mkdir -p {REMOTE_BASE_DIR}/{username}/{sync_sub}/"
     ]
     subprocess.run(mkdir_cmd, capture_output=True)
 
@@ -215,7 +231,7 @@ def rsync_to_gpu_generator(username: str):
         "--exclude", ".venv/",
         "--exclude", "__pycache__/",
         "-e", f"ssh -p {ssh_port} -i {SSH_KEY_PATH} -o StrictHostKeyChecking=no",
-        f"{user_dir}/",
+        local_path,
         remote_path
     ]
 
@@ -247,8 +263,8 @@ def rsync_to_gpu_generator(username: str):
         else:
             yield log_and_yield(f"Sync failed with exit code {process.returncode}")
 
-def rsync_from_gpu_generator(username: str):
-    """Generator that runs rsync to download workspace from GPU VM."""
+def rsync_from_gpu_generator(username: str, subpath: str = ""):
+    """Generator that runs rsync to download workspace from GPU VM with optional subpath validation."""
     now_tz7 = datetime.now(timezone(timedelta(hours=7)))
     timestamp = now_tz7.strftime("%Y%m%d-%H%M%S")
     log_dir = Path(config.BASE_DIR) / ".rsync_logs"
@@ -272,7 +288,21 @@ def rsync_from_gpu_generator(username: str):
         yield "data: Error: User directory not found\n\n"
         return
 
-    remote_path = f"{SSH_USER}@{ssh_host}:{REMOTE_BASE_DIR}/{username}/"
+    # Validate subpath is strictly within user_dir
+    if subpath:
+        target_dir = (user_dir / subpath).resolve()
+        resolved_user_dir = user_dir.resolve()
+        if resolved_user_dir not in [target_dir] + list(target_dir.parents):
+            yield "data: Error: Path escapes user directory\n\n"
+            return
+        os.makedirs(target_dir, exist_ok=True)
+        sync_sub = subpath.strip("/")
+    else:
+        target_dir = user_dir
+        sync_sub = ""
+
+    local_path = str(target_dir) + "/"
+    remote_path = f"{SSH_USER}@{ssh_host}:{REMOTE_BASE_DIR}/{username}/{sync_sub}/"
 
     cmd = [
         "rsync", "-avz", "--delete", "-P",
@@ -280,7 +310,7 @@ def rsync_from_gpu_generator(username: str):
         "--exclude", "__pycache__/",
         "-e", f"ssh -p {ssh_port} -i {SSH_KEY_PATH} -o StrictHostKeyChecking=no",
         remote_path,
-        f"{user_dir}/"
+        local_path
     ]
 
     with open(log_file_path, "w") as log_file:
