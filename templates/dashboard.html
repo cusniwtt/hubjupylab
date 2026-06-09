@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="user-card card" x-data="dashboardState()">
-    <div id="server-status-container">
+    <div id="server-status-container" hx-get="/session/status" hx-trigger="every 5s" hx-swap="innerHTML">
         <div class="status-section">
             <div>
                 <h2 style="font-size: 1.5rem; margin-bottom: 0.25rem;">Your JupyterLab Server</h2>
@@ -68,42 +68,62 @@
 
     {% if has_gpu %}
     <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-            <div>
-                <h3 style="font-size: 1.1rem; margin-bottom: 0.25rem;">🖥️ GPU Server Session</h3>
-                <p style="font-size: 0.75rem; color: var(--text-secondary);">Manual sync files before launching</p>
+        <div id="gpu-status-panel">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <div>
+                    <h3 style="font-size: 1.1rem; margin-bottom: 0.25rem;">🖥️ GPU Server Session</h3>
+                    <p style="font-size: 0.75rem; color: var(--text-secondary);">Manual sync files before launching</p>
+                </div>
+                
+                {% if user.gpu_init_status == 'ready' %}
+                <span class="badge" style="background-color: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟢 Ready</span>
+                {% elif user.gpu_init_status == 'running' %}
+                <span class="badge" style="background-color: rgba(59, 130, 246, 0.15); color: #60a5fa; font-size: 0.875rem; padding: 0.4rem 0.8rem;">⏳ Initializing...</span>
+                {% elif user.gpu_init_status == 'failed' %}
+                <span class="badge" style="background-color: rgba(239, 68, 68, 0.15); color: #f87171; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🔴 Setup Failed</span>
+                {% elif user.gpu_init_status == 'stopped' %}
+                <span class="badge" style="background-color: rgba(156, 163, 175, 0.15); color: #9ca3af; font-size: 0.875rem; padding: 0.4rem 0.8rem;">⚪ Stopped by Admin</span>
+                {% else %}
+                <span class="badge" style="background-color: rgba(245, 158, 11, 0.15); color: #fbbf24; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟡 Pending Setup</span>
+                {% endif %}
             </div>
             
-            {% if user.gpu_init_status == 'ready' %}
-            <span class="badge" style="background-color: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟢 Ready</span>
-            {% elif user.gpu_init_status == 'running' %}
-            <span class="badge" style="background-color: rgba(59, 130, 246, 0.15); color: #60a5fa; font-size: 0.875rem; padding: 0.4rem 0.8rem;">⏳ Initializing...</span>
-            {% elif user.gpu_init_status == 'failed' %}
-            <span class="badge" style="background-color: rgba(239, 68, 68, 0.15); color: #f87171; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🔴 Setup Failed</span>
-            {% elif user.gpu_init_status == 'stopped' %}
-            <span class="badge" style="background-color: rgba(156, 163, 175, 0.15); color: #9ca3af; font-size: 0.875rem; padding: 0.4rem 0.8rem;">⚪ Stopped by Admin</span>
-            {% else %}
-            <span class="badge" style="background-color: rgba(245, 158, 11, 0.15); color: #fbbf24; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟡 Pending Setup</span>
-            {% endif %}
-        </div>
-        
-        <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 0.5rem;">
-            <div style="display: flex; gap: 1rem;">
+            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
                 {% if user.gpu_init_status == 'ready' %}
                 {% set separator = '&' if '?' in gpu_endpoint else '?' %}
-                <a href="{{ gpu_endpoint }}{{ separator }}token={{ user.gpu_token }}" target="_blank" onclick="return confirm('Make sure you don\'t want to sync data to GPU session?')" class="btn" style="flex: 2; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center;">
+                <a href="{{ gpu_endpoint }}{{ separator }}token={{ user.gpu_token }}" target="_blank" onclick="return confirm('Make sure you don\'t want to sync data to GPU session?')" class="btn" style="flex: 2; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%;">
                     🚀 Launch GPU Session
                 </a>
                 {% else %}
-                <button class="btn btn-outline" style="flex: 2; opacity: 0.5; cursor: not-allowed;" disabled>
+                <button class="btn btn-outline" style="flex: 2; opacity: 0.5; cursor: not-allowed; width: 100%;" disabled>
                     🚀 Launch GPU (Not Ready)
                 </button>
                 {% endif %}
             </div>
+        </div>
+        
+        <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 0.5rem;">
             
             <div class="form-group" style="margin-bottom: 0.5rem; width: 100%;">
-                <label for="sync_subpath" style="display: block; font-size: 0.8, font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Sync subpath only (optional):</label>
-                <input type="text" id="sync_subpath" name="sync_subpath" class="form-control" placeholder="e.g. data (leave blank to sync all)" style="font-size: 0.85rem; padding: 0.4rem 0.8rem; width: 100%;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                    <label for="sync_subpath" style="font-size: 0.8rem; color: var(--text-secondary); margin: 0;">Sync subpath only (optional):</label>
+                    <button type="button" @click="toggleTree()" class="btn btn-outline" style="font-size: 0.75rem; padding: 0.2rem 0.5rem; height: auto;">
+                        <span x-text="showTree ? '🙈 Hide Folders' : '📁 Browse Folders'"></span>
+                    </button>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <input type="text" id="sync_subpath" name="sync_subpath" class="form-control" placeholder="e.g. data (leave blank to sync all)" style="font-size: 0.85rem; padding: 0.4rem 0.8rem; flex: 1;">
+                    <button type="button" @click="refreshTree()" x-show="showTree" class="btn btn-outline" style="font-size: 0.75rem; padding: 0.4rem 0.6rem; height: auto;" title="Refresh directory structure">
+                        🔄
+                    </button>
+                </div>
+                
+                <!-- Collapsible directory tree container -->
+                <div x-show="showTree" x-transition style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
+                    <div id="tree_container" style="border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem; max-height: 200px; overflow-y: auto; background: rgba(15, 23, 42, 0.4); backdrop-filter: blur(4px);">
+                        <!-- Tree will be rendered here -->
+                    </div>
+                </div>
             </div>
 
             <div style="display: flex; gap: 1rem;">
@@ -130,6 +150,8 @@
 function dashboardState() {
     return {
         syncing: false,
+        showTree: false,
+        treeLoaded: false,
         copyToClipboard() {
             var urlText = document.getElementById("jupyterUrl").innerText;
             navigator.clipboard.writeText(urlText).then(() => {
@@ -137,8 +159,143 @@ function dashboardState() {
             }, (err) => {
                 window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: "Could not copy text to clipboard.", type: "error" } }));
             });
+        },
+        toggleTree() {
+            this.showTree = !this.showTree;
+            if (this.showTree && !this.treeLoaded) {
+                this.refreshTree();
+            }
+        },
+        async refreshTree() {
+            const container = document.getElementById("tree_container");
+            if (!container) return;
+            container.innerHTML = `<div style="padding: 0.5rem; color: var(--text-secondary); font-size: 0.875rem;">Loading directories...</div>`;
+            try {
+                const response = await fetch("/session/gpu/list-dirs");
+                if (!response.ok) throw new Error("Failed to load directories");
+                const data = await response.json();
+                container.innerHTML = "";
+                
+                // Add a Root / Sync All selection button/row
+                const rootRow = document.createElement("div");
+                rootRow.style.display = "flex";
+                rootRow.style.alignItems = "center";
+                rootRow.style.cursor = "pointer";
+                rootRow.style.padding = "0.3rem 0.4rem";
+                rootRow.style.borderRadius = "4px";
+                rootRow.style.fontSize = "0.875rem";
+                rootRow.style.fontWeight = "600";
+                rootRow.style.color = "var(--accent-color)";
+                rootRow.style.marginBottom = "0.25rem";
+                rootRow.innerHTML = `<span style="margin-right: 0.4rem; width: 12px; display: inline-block;"></span><span style="margin-right: 0.4rem;">🏠</span>[Sync Entire Workspace]`;
+                rootRow.onmouseover = () => rootRow.style.backgroundColor = "rgba(99, 102, 241, 0.15)";
+                rootRow.onmouseout = () => rootRow.style.backgroundColor = "transparent";
+                rootRow.onclick = () => {
+                    document.getElementById("sync_subpath").value = "";
+                    window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: "Selected entire workspace root", type: "success" } }));
+                };
+                container.appendChild(rootRow);
+                
+                if (data.length === 0) {
+                    const empty = document.createElement("div");
+                    empty.style.padding = "0.5rem";
+                    empty.style.color = "var(--text-secondary)";
+                    empty.style.fontSize = "0.875rem";
+                    empty.innerText = "No subdirectories found.";
+                    container.appendChild(empty);
+                } else {
+                    renderTree(data, container, (path) => {
+                        document.getElementById("sync_subpath").value = path;
+                        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Selected directory: ${path}`, type: "success" } }));
+                    });
+                }
+                this.treeLoaded = true;
+            } catch (err) {
+                container.innerHTML = `<div style="padding: 0.5rem; color: var(--danger-color); font-size: 0.875rem;">Error loading directory structure.</div>`;
+            }
         }
     }
+}
+
+function renderTree(nodes, parentEl, selectFn) {
+    const ul = document.createElement('ul');
+    ul.style.listStyleType = 'none';
+    ul.style.paddingLeft = '1rem';
+    ul.style.margin = '0';
+    
+    nodes.forEach(node => {
+        const li = document.createElement('li');
+        li.style.margin = '0.2rem 0';
+        
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.cursor = 'pointer';
+        row.style.padding = '0.25rem 0.4rem';
+        row.style.borderRadius = '4px';
+        row.style.fontSize = '0.875rem';
+        row.style.color = 'var(--text-primary)';
+        row.style.transition = 'all 0.15s ease';
+        
+        row.onmouseover = () => row.style.backgroundColor = 'rgba(255, 255, 255, 0.06)';
+        row.onmouseout = () => row.style.backgroundColor = 'transparent';
+        
+        const toggleIcon = document.createElement('span');
+        toggleIcon.style.marginRight = '0.3rem';
+        toggleIcon.style.fontFamily = 'monospace';
+        toggleIcon.style.display = 'inline-block';
+        toggleIcon.style.width = '12px';
+        toggleIcon.style.textAlign = 'center';
+        toggleIcon.style.color = 'var(--text-secondary)';
+        toggleIcon.style.fontSize = '0.75rem';
+        
+        const folderIcon = document.createElement('span');
+        folderIcon.style.marginRight = '0.4rem';
+        folderIcon.innerText = '📁';
+        folderIcon.style.fontSize = '0.9rem';
+        
+        const label = document.createElement('span');
+        label.innerText = node.name;
+        label.style.userSelect = 'none';
+        
+        row.appendChild(toggleIcon);
+        row.appendChild(folderIcon);
+        row.appendChild(label);
+        li.appendChild(row);
+        
+        if (node.children && node.children.length > 0) {
+            toggleIcon.innerText = '▶';
+            toggleIcon.style.cursor = 'pointer';
+            
+            const childContainer = document.createElement('div');
+            childContainer.style.display = 'none';
+            renderTree(node.children, childContainer, selectFn);
+            li.appendChild(childContainer);
+            
+            const toggle = (e) => {
+                e.stopPropagation();
+                if (childContainer.style.display === 'none') {
+                    childContainer.style.display = 'block';
+                    toggleIcon.innerText = '▼';
+                } else {
+                    childContainer.style.display = 'none';
+                    toggleIcon.innerText = '▶';
+                }
+            };
+            
+            toggleIcon.onclick = toggle;
+        } else {
+            toggleIcon.innerHTML = '&nbsp;';
+        }
+        
+        row.onclick = () => {
+            selectFn(node.path);
+        };
+        
+        ul.appendChild(li);
+    });
+    
+    parentEl.appendChild(ul);
 }
 
 let syncEventSource = null;

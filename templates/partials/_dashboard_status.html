@@ -57,3 +57,39 @@
     </button>
     {% endif %}
 </div>
+
+{% if has_gpu %}
+<div id="gpu-status-panel" hx-swap-oob="true">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <div>
+            <h3 style="font-size: 1.1rem; margin-bottom: 0.25rem;">🖥️ GPU Server Session</h3>
+            <p style="font-size: 0.75rem; color: var(--text-secondary);">Manual sync files before launching</p>
+        </div>
+        
+        {% if gpu_init_status == 'ready' %}
+        <span class="badge" style="background-color: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟢 Ready</span>
+        {% elif gpu_init_status == 'running' %}
+        <span class="badge" style="background-color: rgba(59, 130, 246, 0.15); color: #60a5fa; font-size: 0.875rem; padding: 0.4rem 0.8rem;">⏳ Initializing...</span>
+        {% elif gpu_init_status == 'failed' %}
+        <span class="badge" style="background-color: rgba(239, 68, 68, 0.15); color: #f87171; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🔴 Setup Failed</span>
+        {% elif gpu_init_status == 'stopped' %}
+        <span class="badge" style="background-color: rgba(156, 163, 175, 0.15); color: #9ca3af; font-size: 0.875rem; padding: 0.4rem 0.8rem;">⚪ Stopped by Admin</span>
+        {% else %}
+        <span class="badge" style="background-color: rgba(245, 158, 11, 0.15); color: #fbbf24; font-size: 0.875rem; padding: 0.4rem 0.8rem;">🟡 Pending Setup</span>
+        {% endif %}
+    </div>
+    
+    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+        {% if gpu_init_status == 'ready' %}
+        {% set separator = '&' if '?' in gpu_endpoint else '?' %}
+        <a href="{{ gpu_endpoint }}{{ separator }}token={{ gpu_token }}" target="_blank" onclick="return confirm('Make sure you don\'t want to sync data to GPU session?')" class="btn" style="flex: 2; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%;">
+            🚀 Launch GPU Session
+        </a>
+        {% else %}
+        <button class="btn btn-outline" style="flex: 2; opacity: 0.5; cursor: not-allowed; width: 100%;" disabled>
+            🚀 Launch GPU (Not Ready)
+        </button>
+        {% endif %}
+    </div>
+</div>
+{% endif %}

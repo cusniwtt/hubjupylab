@@ -370,3 +370,17 @@ def rsync_gpu_to_user(username: str) -> tuple[bool, str]:
     if not msg:
         msg = "Sync back complete" if success else "rsync back failed"
     return success, msg
+
+def get_last_gpu_log(username: str) -> str:
+    """Retrieve the latest GPU initialization log content for the user."""
+    log_dir = Path(config.BASE_DIR) / ".gpu_logs"
+    if not log_dir.exists():
+        return "No logs found."
+    log_files = sorted(log_dir.glob(f"{username}-*-gpu.log"))
+    if not log_files:
+        return "No setup logs found for this user."
+    try:
+        return log_files[-1].read_text(encoding='utf-8')
+    except Exception as e:
+        return f"Error reading log file: {str(e)}"
+

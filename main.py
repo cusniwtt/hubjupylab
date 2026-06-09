@@ -136,6 +136,32 @@ def admin_gpu_select_partial(request: Request, admin_user=Depends(require_admin)
         context={"users": users}
     )
 
+@app.get("/admin/users/row/{username}")
+def admin_user_row(username: str, request: Request, admin_user=Depends(require_admin)):
+    enriched = _build_admin_user_context(username, request)
+    if not enriched:
+        raise HTTPException(status_code=404, detail="User not found")
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/_admin_user_row.html",
+        context={"u": enriched}
+    )
+
+
+@app.get("/admin/users/status-poll")
+def admin_users_status_poll(request: Request, admin_user=Depends(require_admin)):
+    enriched_users = _get_enriched_users(request)
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/_admin_user_table_body.html",
+        context={
+            "users": enriched_users,
+            "is_poll": True
+        }
+    )
+
+
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_dashboard(request: Request, error: str = None, success: str = None, admin_user=Depends(require_admin)):
     users_list = db.list_users()
@@ -526,6 +552,38 @@ def user_restart_session(request: Request, current_user=Depends(require_auth)):
     return RedirectResponse(url="/dashboard?success=JupyterLab+restarted", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@app.get("/session/status")
+def user_session_status(request: Request, current_user=Depends(require_auth)):
+    username = current_user['username']
+    port = current_user['port']
+    host_ip = config.HOST_IP if config.HOST_IP else request.base_url.hostname
+    is_running = spawner.is_session_running(username)
+    
+    jupyter_url = ""
+    if is_running and current_user['token']:
+        jupyter_url = f"http://{host_ip}:{port}/lab?token={current_user['token']}"
+        
+    has_gpu = bool(current_user['gpu_endpoint'])
+    gpu_endpoint = current_user['gpu_endpoint'] or ""
+    gpu_init_status = current_user['gpu_init_status'] or ""
+    gpu_token = current_user['gpu_token'] or ""
+    
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/_dashboard_status.html",
+        context={
+            "is_running": is_running,
+            "user_port": port,
+            "jupyter_url": jupyter_url,
+            "has_gpu": has_gpu,
+            "gpu_endpoint": gpu_endpoint,
+            "gpu_init_status": gpu_init_status,
+            "gpu_token": gpu_token,
+            "user": current_user
+        }
+    )
+
+
 @app.post("/admin/gpu/assign/{username}")
 def admin_gpu_assign(
     username: str,
@@ -536,19 +594,15 @@ def admin_gpu_assign(
     gpu_token: str = Form(""),
     admin_user=Depends(require_admin)
 ):
-    if not gpu_endpoint:
-        db.unassign_gpu(username)
-        if request and request.headers.get("HX-Request") == "true":
-            enriched = _build_admin_user_context(username, request)
-            response = templates.TemplateResponse(
-                request=request,
-                name="partials/_admin_user_row.html",
-                context={"u": enriched}
-            )
-            response.headers["HX-Trigger"] = '{"showToast": {"message": "GPU access removed for ' + username + '", "type": "success"}, "userListUpdated": null}'
-            return response
-        return RedirectResponse(url=f"/admin?success=GPU+access+removed+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
-    db.assign_gpu(username, gpu_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port)
+    user = db.get_user_by_username(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # Preserve current token if not supplied
+    token_to_save = gpu_token if gpu_token else user['gpu_token']
+    
+    db.assign_gpu(username, gpu_endpoint, token_to_save, gpu_ssh_host, gpu_ssh_port)
+    
     if request and request.headers.get("HX-Request") == "true":
         enriched = _build_admin_user_context(username, request)
         response = templates.TemplateResponse(
@@ -559,6 +613,27 @@ def admin_gpu_assign(
         response.headers["HX-Trigger"] = '{"showToast": {"message": "GPU assigned to ' + username + '", "type": "success"}, "userListUpdated": null}'
         return response
     return RedirectResponse(url=f"/admin?success=GPU+assigned+to+{username}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/admin/gpu/unassign/{username}")
+def admin_gpu_unassign(username: str, request: Request = None, admin_user=Depends(require_admin)):
+    db.unassign_gpu(username)
+    if request and request.headers.get("HX-Request") == "true":
+        enriched = _build_admin_user_context(username, request)
+        response = templates.TemplateResponse(
+            request=request,
+            name="partials/_admin_user_row.html",
+            context={"u": enriched}
+        )
+        response.headers["HX-Trigger"] = '{"showToast": {"message": "GPU configuration removed for ' + username + '", "type": "success"}, "userListUpdated": null}'
+        return response
+    return RedirectResponse(url=f"/admin?success=GPU+configuration+removed+for+{username}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.get("/admin/gpu/last-log/{username}")
+def admin_gpu_last_log(username: str, admin_user=Depends(require_admin)):
+    log_content = gpu.get_last_gpu_log(username)
+    return Response(content=log_content, media_type="text/plain")
+
+
 
 # --- GPU Management & Sync ---
 
@@ -709,6 +784,35 @@ def user_sync_from_stream(path: str = "", current_user=Depends(require_auth)):
         gpu.rsync_from_gpu_generator(username, subpath=path),
         media_type="text/event-stream"
     )
+
+@app.get("/session/gpu/list-dirs")
+def user_list_dirs(current_user=Depends(require_auth)):
+    if current_user['role'] == 'admin':
+        raise HTTPException(status_code=403, detail="Admins cannot view user directories")
+    username = current_user['username']
+    user_dir = Path(config.BASE_DIR) / username
+    if not user_dir.exists():
+        return []
+    
+    def get_directory_tree(path: Path, base_path: Path) -> list:
+        tree = []
+        try:
+            items = sorted(path.iterdir(), key=lambda x: x.name.lower())
+            for item in items:
+                if item.is_dir():
+                    if item.name in {'.git', '.venv', '__pycache__', '.ipynb_checkpoints'}:
+                        continue
+                    rel_path = str(item.relative_to(base_path))
+                    tree.append({
+                        "name": item.name,
+                        "path": rel_path,
+                        "children": get_directory_tree(item, base_path)
+                    })
+        except PermissionError:
+            pass
+        return tree
+
+    return get_directory_tree(user_dir, user_dir)
 
 # Catch redirection exceptions and map them to HTTP responses
 @app.exception_handler(HTTPException)
