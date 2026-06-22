@@ -4,7 +4,8 @@
   "description": "Lightweight JupyterLab Hub using tmux — Bun + Elysia",
   "scripts": {
     "dev": "bun run --watch src/index.ts",
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "elysia": "^1.2",

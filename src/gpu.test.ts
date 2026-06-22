@@ -58,13 +58,13 @@ describe("GPU Module", () => {
     const logDir = join(BASE_DIR, ".gpu_logs");
     mkdirSync(logDir, { recursive: true });
     
-    const logPath1 = join(logDir, "gputestuser-20260622-000000-gpu.log");
-    const logPath2 = join(logDir, "gputestuser-20260622-000001-gpu.log");
+    const logPath1 = join(logDir, "logtestuser-20260622-000000-gpu.log");
+    const logPath2 = join(logDir, "logtestuser-20260622-000001-gpu.log");
     
     writeFileSync(logPath1, "Log 1 content");
     writeFileSync(logPath2, "Log 2 content");
 
-    const content = getLastGpuLog("gputestuser");
+    const content = getLastGpuLog("logtestuser");
     expect(content).toBe("Log 2 content");
 
     // Clean up
