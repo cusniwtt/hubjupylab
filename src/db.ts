@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { BASE_DIR, ADMIN_USER, ADMIN_PASS } from "./config";
 
-const DB_PATH = join(BASE_DIR, "hubjupylab.db");
+const DB_PATH = process.env.DB_PATH || Bun.env.DB_PATH || join(BASE_DIR, "hubjupylab.db");
 const db = new Database(DB_PATH, { create: true });
 db.exec("PRAGMA journal_mode = WAL");
 

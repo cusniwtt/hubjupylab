@@ -1,9 +1,10 @@
-import { expect, test, describe, beforeAll } from "bun:test";
+import { expect, test, describe, beforeAll, afterAll } from "bun:test";
 import { unlinkSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { BASE_DIR } from "./config";
 
-const TEST_DB = join(BASE_DIR, "hubjupylab.db");
+const TEST_DB = join(BASE_DIR, "hubjupylab_test.db");
+process.env.DB_PATH = TEST_DB;
 
 // Delete the DB file before requiring the db module to avoid unlinking an open file
 if (existsSync(TEST_DB)) {
@@ -113,5 +114,13 @@ describe("Database Module", () => {
     deleteUser("testuser");
     const user = getUserByUsername("testuser");
     expect(user).toBeNull();
+  });
+
+  afterAll(() => {
+    if (existsSync(TEST_DB)) {
+      try {
+        unlinkSync(TEST_DB);
+      } catch (_) {}
+    }
   });
 });
