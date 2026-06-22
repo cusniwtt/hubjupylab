@@ -3,7 +3,7 @@ import { unlinkSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BASE_DIR } from "./config";
 import { initDb, createUser, deleteUser } from "./db";
-import { getNextPort, getUserDir, cleanupUserFiles } from "./spawner";
+import { getNextPort, getUserDir, cleanupUserFiles, spawnSession, validateUsername } from "./spawner";
 
 const TEST_DB = join(BASE_DIR, "hubjupylab_spawner_test.db");
 process.env.DB_PATH = TEST_DB;
@@ -55,5 +55,26 @@ describe("Spawner Module", () => {
 
     cleanupUserFiles("tempuser");
     expect(existsSync(userDir)).toBe(false);
+  });
+
+  test("validateUsername validates correctly", () => {
+    expect(() => validateUsername("valid_user-123")).not.toThrow();
+    expect(() => validateUsername("invalid;user")).toThrow();
+    expect(() => validateUsername("../user")).toThrow();
+  });
+
+  test("getUserDir throws on path traversal attempts", () => {
+    expect(() => getUserDir("valid-user")).not.toThrow();
+    expect(() => getUserDir("invalid/user")).toThrow();
+    expect(() => getUserDir("../outside")).toThrow();
+  });
+
+  test("spawnSession rejects invalid ports or tokens", async () => {
+    // Port out of bounds
+    await expect(spawnSession("validuser", 9999, "token")).rejects.toThrow("Invalid port: 9999");
+    // Non-integer port
+    await expect(spawnSession("validuser", 8081.5, "token")).rejects.toThrow("Invalid port: 8081.5");
+    // Invalid token characters
+    await expect(spawnSession("validuser", 8081, "token;injection")).rejects.toThrow("Invalid token format");
   });
 });
