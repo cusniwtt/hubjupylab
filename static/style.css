@@ -476,10 +476,22 @@ tr.htmx-swapping {
     transition: opacity 0.5s ease-out;
 }
 
+/* GPU panel responsive grid */
+.gpu-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+    gap: 2rem;
+}
+
 /* ========== RESPONSIVE STYLES ========== */
 
 /* Tablet (< 768px) */
 @media (max-width: 768px) {
+  .gpu-grid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
   header {
     flex-direction: column;
     gap: 0.75rem;

@@ -97,7 +97,7 @@ function toggleGpuPanel(username) {
     const panel = document.getElementById('gpu-panel-' + username);
     if (!panel) return;
     if (panel.style.display === 'none') {
-        panel.style.display = 'table-row';
+        panel.style.display = '';
         const consoleBox = document.getElementById('gpu-console-' + username);
         if (consoleBox) {
             htmx.trigger(consoleBox, 'load-log');
@@ -124,7 +124,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     if (targetId && targetId.startsWith('user-row-')) {
         const username = targetId.replace('user-row-', '');
         const panel = document.getElementById('gpu-panel-' + username);
-        if (panel && panelStates[username]) {
+        if (panel && panelStates[username] !== undefined) {
             panel.style.display = panelStates[username];
         }
     }
