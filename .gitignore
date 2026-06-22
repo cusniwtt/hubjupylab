@@ -19,3 +19,9 @@ dev_users/
 # IDEs
 .vscode/
 .idea/
+
+# Bun / Node
+node_modules/
+bun.lock
+dist/
+

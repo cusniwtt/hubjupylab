@@ -1,0 +1,17 @@
+{
+  "name": "hubjupylab",
+  "version": "2.0.0",
+  "description": "Lightweight JupyterLab Hub using tmux — Bun + Elysia",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "elysia": "^1.2",
+    "@elysiajs/static": "^1.2",
+    "nunjucks": "^3.2"
+  },
+  "devDependencies": {
+    "@types/nunjucks": "^3.2"
+  }
+}
