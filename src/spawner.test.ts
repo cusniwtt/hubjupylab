@@ -2,11 +2,11 @@ import { expect, test, describe, beforeAll, afterAll } from "bun:test";
 import { unlinkSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BASE_DIR } from "./config";
-import { initDb, createUser, deleteUser } from "./db";
-import { getNextPort, getUserDir, cleanupUserFiles, spawnSession, validateUsername } from "./spawner";
-
 const TEST_DB = join(BASE_DIR, "hubjupylab_spawner_test.db");
 process.env.DB_PATH = TEST_DB;
+
+const { initDb, createUser, deleteUser } = require("./db");
+const { getNextPort, getUserDir, cleanupUserFiles, spawnSession, validateUsername } = require("./spawner");
 
 describe("Spawner Module", () => {
   beforeAll(async () => {

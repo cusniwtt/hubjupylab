@@ -109,6 +109,19 @@ export async function stopGpuSession(username: string): Promise<[boolean, string
   }
 }
 
+export function isValidGpuEndpoint(endpoint: string): boolean {
+  if (endpoint === "") return true;
+  if (/['";`$|&<>\s]/.test(endpoint)) {
+    return false;
+  }
+  try {
+    const url = new URL(endpoint);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+}
+
 export function gpuInitStream(
   username: string, host: string, port: number,
   keyPath: string, sshUser: string, token: string, endpoint: string
@@ -116,6 +129,8 @@ export function gpuInitStream(
   const logDir = join(BASE_DIR, ".gpu_logs");
   mkdirSync(logDir, { recursive: true });
   const logPath = join(logDir, `${username}-${logTimestamp()}-gpu.log`);
+
+  let activeProc: any = null;
 
   return new ReadableStream<string>({
     async start(controller) {
@@ -130,6 +145,9 @@ export function gpuInitStream(
       }
 
       try {
+        if (endpoint !== "" && !isValidGpuEndpoint(endpoint)) {
+          throw new Error("Invalid GPU endpoint structure or dangerous characters detected");
+        }
         updateGpuInitStatus(username, "running");
         emit("Starting GPU initialization...");
 
@@ -150,16 +168,22 @@ export function gpuInitStream(
             `${sshUser}@${host}`, remoteCmd
           ], { stdout: "pipe", stderr: "pipe" });
 
-          const stdoutPromise = readStream(proc.stdout, (l) => {
-            emit(`  [${stepName}] ${l}`);
-          });
-          const stderrPromise = readStream(proc.stderr, (l) => {
-            emit(`  [${stepName} ERR] ${l}`);
-          });
+          activeProc = proc;
 
-          await Promise.all([stdoutPromise, stderrPromise]);
-          const exitCode = await proc.exited;
-          if (exitCode !== 0) throw new Error(`${stepName} failed with exit status ${exitCode}`);
+          try {
+            const stdoutPromise = readStream(proc.stdout, (l) => {
+              emit(`  [${stepName}] ${l}`);
+            });
+            const stderrPromise = readStream(proc.stderr, (l) => {
+              emit(`  [${stepName} ERR] ${l}`);
+            });
+
+            await Promise.all([stdoutPromise, stderrPromise]);
+            const exitCode = await proc.exited;
+            if (exitCode !== 0) throw new Error(`${stepName} failed with exit status ${exitCode}`);
+          } finally {
+            activeProc = null;
+          }
         };
 
         await runStep("apt-update", "apt-get update -y");
@@ -185,6 +209,13 @@ export function gpuInitStream(
         logWriter.end();
       }
     },
+    cancel(reason) {
+      if (activeProc) {
+        try {
+          activeProc.kill();
+        } catch (_) {}
+      }
+    }
   });
 }
 
@@ -202,6 +233,8 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
   const suffix = direction === "to" ? "rsync-to" : "rsync-from";
   const logPath = join(logDir, `${username}-${logTimestamp()}-${suffix}.log`);
 
+  let activeProc: any = null;
+
   return new ReadableStream<string>({
     async start(controller) {
       const logWriter = Bun.file(logPath).writer();
@@ -214,6 +247,11 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
       }
 
       try {
+        if (subpath !== "" && !/^[a-zA-Z0-9_/.-]+$/.test(subpath)) {
+          emit("Error: Invalid subpath pattern");
+          return;
+        }
+
         const user = getUserByUsername(username);
         if (!user) {
           emit("Error: User not found");
@@ -261,12 +299,19 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
             "-o", "StrictHostKeyChecking=no", `${SSH_USER}@${sshHost}`,
             `mkdir -p ${REMOTE_BASE_DIR}/${username}/${syncSub}/`
           ], { stdout: "pipe", stderr: "pipe" });
-          const stdoutPromise = new Response(mkdirProc.stdout).text();
-          const stderrPromise = new Response(mkdirProc.stderr).text();
-          const exitCode = await mkdirProc.exited;
-          const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
-          if (exitCode !== 0) {
-            emit(`Warning: remote mkdir failed: ${stderr.trim() || stdout.trim() || "unknown error"}`);
+
+          activeProc = mkdirProc;
+
+          try {
+            const stdoutPromise = new Response(mkdirProc.stdout).text();
+            const stderrPromise = new Response(mkdirProc.stderr).text();
+            const exitCode = await mkdirProc.exited;
+            const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
+            if (exitCode !== 0) {
+              emit(`Warning: remote mkdir failed: ${stderr.trim() || stdout.trim() || "unknown error"}`);
+            }
+          } finally {
+            activeProc = null;
           }
         }
 
@@ -283,20 +328,25 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
         emit(`Starting rsync ${direction === "to" ? "to" : "from"} GPU...`);
 
         const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+        activeProc = proc;
 
-        const stdoutPromise = readStream(proc.stdout, (line) => {
-          if (line.trim()) emit(line);
-        });
-        const stderrPromise = readStream(proc.stderr, (line) => {
-          if (line.trim()) emit(`Error: ${line}`);
-        });
+        try {
+          const stdoutPromise = readStream(proc.stdout, (line) => {
+            if (line.trim()) emit(line);
+          });
+          const stderrPromise = readStream(proc.stderr, (line) => {
+            if (line.trim()) emit(`Error: ${line}`);
+          });
 
-        await Promise.all([stdoutPromise, stderrPromise]);
-        const exitCode = await proc.exited;
-        if (exitCode === 0) {
-          emit(direction === "to" ? "Sync complete SUCCESS" : "Sync back complete SUCCESS");
-        } else {
-          emit(`Sync ${direction === "to" ? "" : "back "}failed with exit status ${exitCode}`);
+          await Promise.all([stdoutPromise, stderrPromise]);
+          const exitCode = await proc.exited;
+          if (exitCode === 0) {
+            emit(direction === "to" ? "Sync complete SUCCESS" : "Sync back complete SUCCESS");
+          } else {
+            emit(`Sync ${direction === "to" ? "" : "back "}failed with exit status ${exitCode}`);
+          }
+        } finally {
+          activeProc = null;
         }
       } catch (e: any) {
         emit(`Error: ${e.message}`);
@@ -305,6 +355,13 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
         logWriter.end();
       }
     },
+    cancel(reason) {
+      if (activeProc) {
+        try {
+          activeProc.kill();
+        } catch (_) {}
+      }
+    }
   });
 }
 

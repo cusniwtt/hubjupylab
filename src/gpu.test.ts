@@ -14,7 +14,7 @@ if (existsSync(TEST_DB)) {
 
 // Dynamically require to avoid ES import hoisting issues
 const { initDb, createUser, deleteUser, assignGpu } = require("./db");
-const { testGpuSsh, stopGpuSession, getLastGpuLog, rsyncToGpuStream } = require("./gpu");
+const { testGpuSsh, stopGpuSession, getLastGpuLog, rsyncToGpuStream, isValidGpuEndpoint, gpuInitStream } = require("./gpu");
 
 describe("GPU Module", () => {
   beforeAll(async () => {
@@ -110,5 +110,55 @@ describe("GPU Module", () => {
       const fs = require("node:fs");
       fs.rmSync(userDir, { recursive: true, force: true });
     } catch (_) {}
+  });
+
+  test("isValidGpuEndpoint validates endpoints correctly", () => {
+    expect(isValidGpuEndpoint("")).toBe(true);
+    expect(isValidGpuEndpoint("http://localhost:8888")).toBe(true);
+    expect(isValidGpuEndpoint("https://gpu-1.runpod.net")).toBe(true);
+    expect(isValidGpuEndpoint("http://192.168.1.100:8888/user")).toBe(true);
+
+    // Dangerous / invalid cases
+    expect(isValidGpuEndpoint("http://endpoint;inject")).toBe(false);
+    expect(isValidGpuEndpoint("http://endpoint'inject")).toBe(false);
+    expect(isValidGpuEndpoint("http://endpoint\"inject")).toBe(false);
+    expect(isValidGpuEndpoint("http://endpoint`inject")).toBe(false);
+    expect(isValidGpuEndpoint("http://endpoint$inject")).toBe(false);
+    expect(isValidGpuEndpoint("http://endpoint inject")).toBe(false);
+    expect(isValidGpuEndpoint("invalid-url")).toBe(false);
+  });
+
+  test("rsync subpath injection check", async () => {
+    await createUser("subpathuser", "pass123", "user", 8099);
+    assignGpu("subpathuser", "http://endpoint", "token", "127.0.0.1", 2222);
+    const userDir = join(BASE_DIR, "subpathuser");
+    mkdirSync(userDir, { recursive: true });
+
+    const stream = rsyncToGpuStream("subpathuser", "subpath;injection");
+    const reader = stream.getReader();
+    const { value } = await reader.read();
+    expect(value).toContain("Error: Invalid subpath pattern");
+
+    // Clean up
+    try {
+      deleteUser("subpathuser");
+      const fs = require("node:fs");
+      fs.rmSync(userDir, { recursive: true, force: true });
+    } catch (_) {}
+  });
+
+  test("gpuInitStream validation error on invalid endpoint", async () => {
+    const stream = gpuInitStream(
+      "gputestuser",
+      "127.0.0.1",
+      22,
+      "/dummy/key",
+      "root",
+      "token",
+      "http://endpoint;inject"
+    );
+    const reader = stream.getReader();
+    const { value } = await reader.read();
+    expect(value).toContain("Error: Invalid GPU endpoint structure or dangerous characters detected");
   });
 });

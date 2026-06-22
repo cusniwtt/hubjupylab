@@ -562,9 +562,25 @@ const app = new Elysia()
     const endpoint = (gpu_endpoint ?? "").trim();
     const tokenToSave = (gpu_token ?? "").trim() || user.gpu_token || "";
 
+    const isHtmx = headers["hx-request"] === "true";
+
+    if (endpoint !== "" && !gpu.isValidGpuEndpoint(endpoint)) {
+      if (isHtmx) {
+        const enriched = await enrichUser(username, request);
+        return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
+          headers: {
+            "Content-Type": "text/html",
+            "HX-Trigger": JSON.stringify({
+              showToast: { message: "Invalid GPU endpoint URL format or contains dangerous characters", type: "error" }
+            })
+          }
+        });
+      }
+      return redirect(`/admin?error=Invalid+GPU+endpoint`, 303);
+    }
+
     db.assignGpu(username, endpoint, tokenToSave, host, port);
 
-    const isHtmx = headers["hx-request"] === "true";
     if (isHtmx) {
       const enriched = await enrichUser(username, request);
       return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
@@ -603,16 +619,18 @@ const app = new Elysia()
     return redirect(`/admin?success=GPU+configuration+removed+for+${username}`, 303);
   })
 
-  .get("/admin/gpu/init-stream/:username", async ({ params, cookie, set }) => {
+  .get("/admin/gpu/init-stream/:username", async ({ params, cookie }) => {
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
     const username = params.username;
     const user = db.getUserByUsername(username);
     if (!user) return new Response("User not found", { status: 404 });
 
-    set.headers["Content-Type"] = "text/event-stream";
-    set.headers["Cache-Control"] = "no-cache";
-    set.headers["Connection"] = "keep-alive";
+    const sseHeaders = {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive"
+    };
 
     if (user.gpu_init_status === "running") {
       const encoder = new TextEncoder();
@@ -622,7 +640,7 @@ const app = new Elysia()
           controller.close();
         }
       });
-      return new Response(stream);
+      return new Response(stream, { headers: sseHeaders });
     }
 
     const sshHost = user.gpu_ssh_host;
@@ -637,7 +655,7 @@ const app = new Elysia()
           controller.close();
         }
       });
-      return new Response(stream);
+      return new Response(stream, { headers: sseHeaders });
     }
 
     let token = user.gpu_token;
@@ -656,7 +674,7 @@ const app = new Elysia()
       user.gpu_endpoint ?? ""
     );
 
-    return new Response(toUint8ArrayStream(stringStream));
+    return new Response(toUint8ArrayStream(stringStream), { headers: sseHeaders });
   })
 
   .post("/admin/gpu/stop/:username", async ({ params, cookie, request, redirect, headers }) => {
