@@ -82,7 +82,7 @@
     <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
         {% if gpu_init_status == 'ready' %}
         {% set separator = '&' if '?' in gpu_endpoint else '?' %}
-        <a href="{{ gpu_endpoint }}{{ separator }}token={{ gpu_token }}" target="_blank" onclick="return confirm('Make sure you don\'t want to sync data to GPU session?')" class="btn" style="flex: 2; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%;">
+        <a href="{{ gpu_endpoint }}{{ separator }}token={{ gpu_token }}" target="_blank" class="btn" style="flex: 2; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%;">
             🚀 Launch GPU Session
         </a>
         {% else %}

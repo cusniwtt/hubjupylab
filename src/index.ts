@@ -102,47 +102,40 @@ const app = new Elysia()
   .use(staticPlugin({ prefix: "/static", assets: "static" }))
 
   // --- Auth Routes ---
-  .get("/", ({ cookie, query, set }) => {
+  .get("/", ({ cookie, query, redirect }) => {
     const user = getCurrentUser(cookie);
     if (user) {
-      set.redirect = user.role === "admin" ? "/admin" : "/dashboard";
-      return;
+      return redirect(user.role === "admin" ? "/admin" : "/dashboard");
     }
     return new Response(render("login.html", {
       user: null, error: query.error ?? null, success: query.success ?? null
     }), { headers: { "Content-Type": "text/html" } });
   })
 
-  .post("/login", async ({ body, cookie, set }) => {
+  .post("/login", async ({ body, set, redirect }) => {
     const { username, password } = body as { username?: string; password?: string };
     if (!username || !password) {
-      set.redirect = "/?error=Missing+credentials";
-      set.status = 303;
-      return;
+      return redirect("/?error=Missing+credentials", 303);
     }
     const user = db.getUserByUsername(username);
     if (!user || !(await db.verifyPassword(password, user.password_hash))) {
-      set.redirect = "/?error=Invalid+credentials";
-      set.status = 303;
-      return;
+      return redirect("/?error=Invalid+credentials", 303);
     }
     const signed = signCookie(username);
-    set.redirect = user.role === "admin" ? "/admin" : "/dashboard";
-    set.status = 303;
     set.headers["Set-Cookie"] = `hub_session=${signed}; HttpOnly; SameSite=Lax; Path=/`;
+    return redirect(user.role === "admin" ? "/admin" : "/dashboard", 303);
   })
 
-  .get("/logout", ({ set }) => {
-    set.redirect = "/";
-    set.status = 302;
+  .get("/logout", ({ set, redirect }) => {
     set.headers["Set-Cookie"] = "hub_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    return redirect("/", 302);
   })
 
   // --- User Dashboard ---
-  .get("/dashboard", async ({ cookie, query, request, set }) => {
+  .get("/dashboard", async ({ cookie, query, request, redirect }) => {
     const user = getCurrentUser(cookie);
-    if (!user) { set.redirect = "/"; set.status = 302; return; }
-    if (user.role === "admin") { set.redirect = "/admin"; set.status = 302; return; }
+    if (!user) return redirect("/", 302);
+    if (user.role === "admin") return redirect("/admin", 302);
 
     const hostIp = resolveHostIp(request);
     const isRunning = await spawner.isSessionRunning(user.username);
@@ -160,10 +153,10 @@ const app = new Elysia()
   })
 
   // --- User Session Controls ---
-  .post("/session/start", async ({ cookie, request, set, headers }) => {
+  .post("/session/start", async ({ cookie, request, redirect, headers }) => {
     const user = getCurrentUser(cookie);
-    if (!user) { set.redirect = "/"; set.status = 302; return; }
-    if (user.role === "admin") { set.redirect = "/admin"; set.status = 302; return; }
+    if (!user) return redirect("/", 302);
+    if (user.role === "admin") return redirect("/admin", 302);
 
     const username = user.username;
     const port = user.port!;
@@ -188,8 +181,7 @@ const app = new Elysia()
           "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to start JupyterLab session", type: "error" } })
         }});
       }
-      set.redirect = "/dashboard?error=Failed+to+start+JupyterLab+session";
-      set.status = 303; return;
+      return redirect("/dashboard?error=Failed+to+start+JupyterLab+session", 303);
     }
 
     db.updateToken(username, token);
@@ -206,13 +198,13 @@ const app = new Elysia()
         "HX-Trigger": JSON.stringify({ showToast: { message: "JupyterLab started", type: "success" } })
       }});
     }
-    set.redirect = "/dashboard?success=JupyterLab+started"; set.status = 303;
+    return redirect("/dashboard?success=JupyterLab+started", 303);
   })
 
-  .post("/session/stop", async ({ cookie, request, set, headers }) => {
+  .post("/session/stop", async ({ cookie, request, redirect, headers }) => {
     const user = getCurrentUser(cookie);
-    if (!user) { set.redirect = "/"; set.status = 302; return; }
-    if (user.role === "admin") { set.redirect = "/admin"; set.status = 302; return; }
+    if (!user) return redirect("/", 302);
+    if (user.role === "admin") return redirect("/admin", 302);
 
     const username = user.username;
     const port = user.port!;
@@ -236,8 +228,7 @@ const app = new Elysia()
           "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to stop JupyterLab session", type: "error" } })
         }});
       }
-      set.redirect = "/dashboard?error=Failed+to+stop+JupyterLab+session";
-      set.status = 303; return;
+      return redirect("/dashboard?error=Failed+to+stop+JupyterLab+session", 303);
     }
 
     db.updateToken(username, null);
@@ -254,13 +245,13 @@ const app = new Elysia()
         "HX-Trigger": JSON.stringify({ showToast: { message: "JupyterLab stopped", type: "success" } })
       }});
     }
-    set.redirect = "/dashboard?success=JupyterLab+stopped"; set.status = 303;
+    return redirect("/dashboard?success=JupyterLab+stopped", 303);
   })
 
-  .post("/session/restart", async ({ cookie, request, set, headers }) => {
+  .post("/session/restart", async ({ cookie, request, redirect, headers }) => {
     const user = getCurrentUser(cookie);
-    if (!user) { set.redirect = "/"; set.status = 302; return; }
-    if (user.role === "admin") { set.redirect = "/admin"; set.status = 302; return; }
+    if (!user) return redirect("/", 302);
+    if (user.role === "admin") return redirect("/admin", 302);
 
     const username = user.username;
     const port = user.port!;
@@ -285,8 +276,7 @@ const app = new Elysia()
           "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to restart JupyterLab session", type: "error" } })
         }});
       }
-      set.redirect = "/dashboard?error=Failed+to+restart+JupyterLab+session";
-      set.status = 303; return;
+      return redirect("/dashboard?error=Failed+to+restart+JupyterLab+session", 303);
     }
 
     db.updateToken(username, token);
@@ -303,12 +293,12 @@ const app = new Elysia()
         "HX-Trigger": JSON.stringify({ showToast: { message: "JupyterLab restarted", type: "success" } })
       }});
     }
-    set.redirect = "/dashboard?success=JupyterLab+restarted"; set.status = 303;
+    return redirect("/dashboard?success=JupyterLab+restarted", 303);
   })
 
-  .get("/session/status", async ({ cookie, request, set }) => {
+  .get("/session/status", async ({ cookie, request, redirect }) => {
     const user = getCurrentUser(cookie);
-    if (!user) { set.redirect = "/"; set.status = 302; return; }
+    if (!user) return redirect("/", 302);
     const hostIp = resolveHostIp(request);
     const isRunning = await spawner.isSessionRunning(user.username);
     const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
@@ -322,18 +312,18 @@ const app = new Elysia()
   })
 
   // --- Admin Views & Controls ---
-  .get("/admin", async ({ cookie, query, request, set }) => {
+  .get("/admin", async ({ cookie, query, request, redirect }) => {
     const user = getCurrentUser(cookie);
-    if (!user || user.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!user || user.role !== "admin") return redirect("/", 302);
     const enriched = await getEnrichedUsers(request);
     return new Response(render("admin.html", {
       user, users: enriched, error: query.error ?? null, success: query.success ?? null
     }), { headers: { "Content-Type": "text/html" } });
   })
 
-  .post("/admin/users", async ({ body, cookie, request, set, headers }) => {
+  .post("/admin/users", async ({ body, cookie, request, redirect, headers }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
     const { username, password } = body as { username?: string; password?: string };
     const isHtmx = headers["hx-request"] === "true";
 
@@ -342,7 +332,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 422, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: "Username must be alphanumeric", type: "error" } })
       }});
-      set.redirect = "/admin?error=Username+must+be+alphanumeric"; set.status = 303; return;
+      return redirect("/admin?error=Username+must+be+alphanumeric", 303);
     }
 
     const port = spawner.getNextPort();
@@ -350,7 +340,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 422, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: "No available ports left (limit 9)", type: "error" } })
       }});
-      set.redirect = "/admin?error=No+available+ports+left+(limit+9)"; set.status = 303; return;
+      return redirect("/admin?error=No+available+ports+left+(limit+9)", 303);
     }
 
     const created = await db.createUser(userTrim, password ?? "", "user", port);
@@ -358,7 +348,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 422, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: "Username already exists", type: "error" } })
       }});
-      set.redirect = "/admin?error=Username+already+exists"; set.status = 303; return;
+      return redirect("/admin?error=Username+already+exists", 303);
     }
 
     const envOk = await spawner.setupUserEnv(userTrim);
@@ -367,7 +357,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 422, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to initialize venv for user", type: "error" } })
       }});
-      set.redirect = "/admin?error=Failed+to+initialize+venv+for+user"; set.status = 303; return;
+      return redirect("/admin?error=Failed+to+initialize+venv+for+user", 303);
     }
 
     if (isHtmx) {
@@ -379,12 +369,12 @@ const app = new Elysia()
         }
       });
     }
-    set.redirect = `/admin?success=Created+user+${userTrim}`; set.status = 303;
+    return redirect(`/admin?success=Created+user+${userTrim}`, 303);
   })
 
-  .post("/admin/users/:username", async ({ params, body, cookie, set, headers }) => {
+  .post("/admin/users/:username", async ({ params, body, cookie, redirect, headers }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
 
     // 1. Stop session
@@ -412,13 +402,12 @@ const app = new Elysia()
       });
     }
 
-    set.redirect = `/admin?success=${encodeURIComponent(msg)}`;
-    set.status = 303;
+    return redirect(`/admin?success=${encodeURIComponent(msg)}`, 303);
   })
 
-  .post("/admin/session/start/:username", async ({ params, cookie, request, set, headers }) => {
+  .post("/admin/session/start/:username", async ({ params, cookie, request, redirect, headers }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
     const user = db.getUserByUsername(username);
     const isHtmx = headers["hx-request"] === "true";
@@ -427,7 +416,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 404, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: "User not found", type: "error" } })
       }});
-      set.redirect = "/admin?error=User+not+found"; set.status = 303; return;
+      return redirect("/admin?error=User+not+found", 303);
     }
 
     const port = user.port!;
@@ -437,7 +426,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 500, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: `Failed to start session for ${username}`, type: "error" } })
       }});
-      set.redirect = `/admin?error=Failed+to+start+session+for+${username}`; set.status = 303; return;
+      return redirect(`/admin?error=Failed+to+start+session+for+${username}`, 303);
     }
 
     db.updateToken(username, token);
@@ -451,12 +440,12 @@ const app = new Elysia()
         }
       });
     }
-    set.redirect = `/admin?success=JupyterLab+started+for+${username}`; set.status = 303;
+    return redirect(`/admin?success=JupyterLab+started+for+${username}`, 303);
   })
 
-  .post("/admin/session/stop/:username", async ({ params, cookie, request, set, headers }) => {
+  .post("/admin/session/stop/:username", async ({ params, cookie, request, redirect, headers }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
     const user = db.getUserByUsername(username);
     const isHtmx = headers["hx-request"] === "true";
@@ -465,7 +454,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 404, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: "User not found", type: "error" } })
       }});
-      set.redirect = "/admin?error=User+not+found"; set.status = 303; return;
+      return redirect("/admin?error=User+not+found", 303);
     }
 
     const success = await spawner.stopSession(username);
@@ -473,7 +462,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 500, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: `Failed to stop session for ${username}`, type: "error" } })
       }});
-      set.redirect = `/admin?error=Failed+to+stop+session+for+${username}`; set.status = 303; return;
+      return redirect(`/admin?error=Failed+to+stop+session+for+${username}`, 303);
     }
 
     db.updateToken(username, null);
@@ -487,12 +476,12 @@ const app = new Elysia()
         }
       });
     }
-    set.redirect = `/admin?success=JupyterLab+stopped+for+${username}`; set.status = 303;
+    return redirect(`/admin?success=JupyterLab+stopped+for+${username}`, 303);
   })
 
-  .post("/admin/session/restart/:username", async ({ params, cookie, request, set, headers }) => {
+  .post("/admin/session/restart/:username", async ({ params, cookie, request, redirect, headers }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
     const user = db.getUserByUsername(username);
     const isHtmx = headers["hx-request"] === "true";
@@ -501,7 +490,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 404, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: "User not found", type: "error" } })
       }});
-      set.redirect = "/admin?error=User+not+found"; set.status = 303; return;
+      return redirect("/admin?error=User+not+found", 303);
     }
 
     const port = user.port!;
@@ -514,7 +503,7 @@ const app = new Elysia()
       if (isHtmx) return new Response("", { status: 500, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: `Failed to restart session for ${username}`, type: "error" } })
       }});
-      set.redirect = `/admin?error=Failed+to+restart+session+for+${username}`; set.status = 303; return;
+      return redirect(`/admin?error=Failed+to+restart+session+for+${username}`, 303);
     }
 
     db.updateToken(username, token);
@@ -528,7 +517,7 @@ const app = new Elysia()
         }
       });
     }
-    set.redirect = `/admin?success=JupyterLab+restarted+for+${username}`; set.status = 303;
+    return redirect(`/admin?success=JupyterLab+restarted+for+${username}`, 303);
   })
 
   .get("/admin/users/row/:username", async ({ params, cookie, request }) => {
@@ -560,9 +549,9 @@ const app = new Elysia()
     });
   })
 
-  .post("/admin/gpu/assign/:username", async ({ params, body, cookie, request, set, headers }) => {
+  .post("/admin/gpu/assign/:username", async ({ params, body, cookie, request, redirect, headers }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
     const user = db.getUserByUsername(username);
     if (!user) return new Response("User not found", { status: 404 });
@@ -588,12 +577,12 @@ const app = new Elysia()
         }
       });
     }
-    set.redirect = `/admin?success=GPU+assigned+to+${username}`; set.status = 303;
+    return redirect(`/admin?success=GPU+assigned+to+${username}`, 303);
   })
 
-  .post("/admin/gpu/unassign/:username", async ({ params, cookie, request, set, headers }) => {
+  .post("/admin/gpu/unassign/:username", async ({ params, cookie, request, redirect, headers }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
 
     db.unassignGpu(username);
@@ -611,7 +600,7 @@ const app = new Elysia()
         }
       });
     }
-    set.redirect = `/admin?success=GPU+configuration+removed+for+${username}`; set.status = 303;
+    return redirect(`/admin?success=GPU+configuration+removed+for+${username}`, 303);
   })
 
   .get("/admin/gpu/init-stream/:username", async ({ params, cookie, set }) => {
@@ -670,9 +659,9 @@ const app = new Elysia()
     return new Response(toUint8ArrayStream(stringStream));
   })
 
-  .post("/admin/gpu/stop/:username", async ({ params, cookie, request, set, headers }) => {
+  .post("/admin/gpu/stop/:username", async ({ params, cookie, request, redirect, headers }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
 
     const [success, msg] = await gpu.stopGpuSession(username);
@@ -692,16 +681,15 @@ const app = new Elysia()
       });
     }
     if (success) {
-      set.redirect = `/admin?success=GPU+session+stopped+for+${username}`;
+      return redirect(`/admin?success=GPU+session+stopped+for+${username}`, 303);
     } else {
-      set.redirect = `/admin?error=${encodeURIComponent(msg)}`;
+      return redirect(`/admin?error=${encodeURIComponent(msg)}`, 303);
     }
-    set.status = 303;
   })
 
-  .post("/admin/gpu/reset/:username", async ({ params, cookie, request, set, headers }) => {
+  .post("/admin/gpu/reset/:username", async ({ params, cookie, request, redirect, headers }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
 
     db.updateGpuInitStatus(username, null);
@@ -719,7 +707,7 @@ const app = new Elysia()
         }
       });
     }
-    set.redirect = `/admin?success=GPU+status+reset+for+${username}`; set.status = 303;
+    return redirect(`/admin?success=GPU+status+reset+for+${username}`, 303);
   })
 
   .get("/admin/gpu/last-log/:username", ({ params, cookie }) => {
@@ -730,9 +718,9 @@ const app = new Elysia()
     return new Response(logContent, { headers: { "Content-Type": "text/plain" } });
   })
 
-  .get("/admin/logs", ({ cookie, set }) => {
+  .get("/admin/logs", ({ cookie, redirect }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") { set.redirect = "/"; set.status = 302; return; }
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
 
     const gpuLogsDir = join(config.BASE_DIR, ".gpu_logs");
     const rsyncLogsDir = join(config.BASE_DIR, ".rsync_logs");
@@ -808,30 +796,34 @@ const app = new Elysia()
   })
 
   // --- User GPU Sync & Tree API ---
-  .get("/session/gpu/sync-to-stream", ({ cookie, query, set }) => {
+  .get("/session/gpu/sync-to-stream", ({ cookie, query, redirect }) => {
     const user = getCurrentUser(cookie);
-    if (!user) { set.redirect = "/"; set.status = 302; return; }
+    if (!user) return redirect("/", 302);
     if (user.role === "admin") return new Response("Forbidden", { status: 403 });
 
-    set.headers["Content-Type"] = "text/event-stream";
-    set.headers["Cache-Control"] = "no-cache";
-    set.headers["Connection"] = "keep-alive";
-
-    const stringStream = gpu.rsyncToGpuStream(user.username, query.path ?? "");
-    return new Response(toUint8ArrayStream(stringStream));
+    const responseStream = toUint8ArrayStream(gpu.rsyncToGpuStream(user.username, query.path ?? ""));
+    return new Response(responseStream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive"
+      }
+    });
   })
 
-  .get("/session/gpu/sync-from-stream", ({ cookie, query, set }) => {
+  .get("/session/gpu/sync-from-stream", ({ cookie, query, redirect }) => {
     const user = getCurrentUser(cookie);
-    if (!user) { set.redirect = "/"; set.status = 302; return; }
+    if (!user) return redirect("/", 302);
     if (user.role === "admin") return new Response("Forbidden", { status: 403 });
 
-    set.headers["Content-Type"] = "text/event-stream";
-    set.headers["Cache-Control"] = "no-cache";
-    set.headers["Connection"] = "keep-alive";
-
-    const stringStream = gpu.rsyncFromGpuStream(user.username, query.path ?? "");
-    return new Response(toUint8ArrayStream(stringStream));
+    const responseStream = toUint8ArrayStream(gpu.rsyncFromGpuStream(user.username, query.path ?? ""));
+    return new Response(responseStream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive"
+      }
+    });
   })
 
   .get("/session/gpu/list-dirs", ({ cookie }) => {

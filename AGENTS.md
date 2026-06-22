@@ -26,6 +26,8 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 - **SSE progress streaming**: Live console feedback for both GPU initialization (admin console) and rsync progress (user console).
 - **GPU Init State Machine**: `NULL` -> `pending` -> `running` -> `ready` / `failed` / `stopped`.
 - **Manual Rsync Controls**: Replaced auto-rsync with manual "Sync To GPU" and "Sync From GPU" triggers on user dashboard to reduce sync complexity.
+- **Rsync Progress Bar**: Real-time parsing of rsync SSE stream showing active file name, percent completion, transfer speed, and ETA with a dynamic progress bar.
+- **Smoother GPU Launch**: Removed confirmation prompt on "Launch GPU Session" for faster entry.
 - **Disk Logging & Caching**: Persistent logs under `{BASE_DIR}/.gpu_logs/` and `{BASE_DIR}/.rsync_logs/` with dedicated `/admin/logs` viewer. Expandable admin GPU panel pulls the last log from disk on expand.
 - **Redesigned Expandable UI**: Replaced the legacy bottom GPU console card with clean, per-user expandable rows containing inputs, actions (Save, Init, Stop, Reset, Remove), and a live/historical console log viewer.
 - **Decoupled Configuration & Wiping**: GPU configuration (SSH Host/Port, Endpoint URL) is saved independently of completion constraints, resolving the value-wipe bug. Explicit "Remove GPU" button is provided for complete teardown.

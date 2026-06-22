@@ -91,7 +91,7 @@
             <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
                 {% if user.gpu_init_status == 'ready' %}
                 {% set separator = '&' if '?' in gpu_endpoint else '?' %}
-                <a href="{{ gpu_endpoint }}{{ separator }}token={{ user.gpu_token }}" target="_blank" onclick="return confirm('Make sure you don\'t want to sync data to GPU session?')" class="btn" style="flex: 2; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%;">
+                <a href="{{ gpu_endpoint }}{{ separator }}token={{ user.gpu_token }}" target="_blank" class="btn" style="flex: 2; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%;">
                     🚀 Launch GPU Session
                 </a>
                 {% else %}
@@ -140,7 +140,18 @@
             </div>
             
             <!-- Terminal console for sync progress -->
-            <div id="sync_console" style="background: #090d16; border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem; font-family: 'Courier New', Courier, monospace; font-size: 0.85rem; height: 120px; overflow-y: auto; color: #a855f7; white-space: pre-wrap; display: none;"></div>
+            <div id="sync_console_container" style="background: #090d16; border: 1px solid var(--border-color); border-radius: 6px; display: none; flex-direction: column; overflow: hidden; height: 300px; margin-top: 1rem;">
+                <div id="sync_console" style="flex: 1; padding: 1rem; font-family: 'Courier New', Courier, monospace; font-size: 0.85rem; overflow-y: auto; color: #a855f7; white-space: pre-wrap;"></div>
+                <div id="sync_progress_bar_container" style="background: #111827; border-top: 1px solid var(--border-color); padding: 0.75rem 1rem; display: none; align-items: center; gap: 1rem; font-family: 'Courier New', Courier, monospace; font-size: 0.8rem; color: #e9d5ff;">
+                    <span id="sync_progress_file" style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c084fc;"></span>
+                    <div style="width: 150px; height: 8px; background: #1f2937; border-radius: 4px; overflow: hidden; flex-shrink: 0;">
+                        <div id="sync_progress_fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #a855f7, #6366f1); transition: width 0.1s ease;"></div>
+                    </div>
+                    <span id="sync_progress_percent" style="font-weight: bold; width: 40px; text-align: right; flex-shrink: 0;">0%</span>
+                    <span id="sync_progress_speed" style="width: 90px; text-align: right; color: #9ca3af; flex-shrink: 0;"></span>
+                    <span id="sync_progress_eta" style="width: 70px; text-align: right; color: #9ca3af; flex-shrink: 0;"></span>
+                </div>
+            </div>
         </div>
     </div>
     {% endif %}
@@ -299,11 +310,24 @@ function renderTree(nodes, parentEl, selectFn) {
 }
 
 let syncEventSource = null;
+let currentFileName = "";
 
 function runSync(endpoint, actionName, alpineComponent) {
     alpineComponent.syncing = true;
     const consoleBox = document.getElementById("sync_console");
-    consoleBox.style.display = "block";
+    const container = document.getElementById("sync_console_container");
+    const progContainer = document.getElementById("sync_progress_bar_container");
+    
+    container.style.display = "flex";
+    progContainer.style.display = "none";
+    
+    document.getElementById("sync_progress_file").innerText = "";
+    document.getElementById("sync_progress_fill").style.width = "0%";
+    document.getElementById("sync_progress_percent").innerText = "0%";
+    document.getElementById("sync_progress_speed").innerText = "";
+    document.getElementById("sync_progress_eta").innerText = "";
+    currentFileName = "";
+
     consoleBox.innerText = `[Client] Connecting to ${actionName} stream...\n`;
     consoleBox.scrollTop = consoleBox.scrollHeight;
     
@@ -314,8 +338,49 @@ function runSync(endpoint, actionName, alpineComponent) {
     syncEventSource = new EventSource(endpoint);
     
     syncEventSource.onmessage = function(event) {
-        consoleBox.innerText += event.data + "\n";
-        consoleBox.scrollTop = consoleBox.scrollHeight;
+        const line = event.data.trim();
+        if (!line) return;
+        
+        // Match percentage, speed, and ETA in rsync output
+        const progressMatch = line.match(/\s+\d+(?:,\d+)*\s+(\d+)%\s+([^\s]+\/s)?\s*(\d+:\d+:\d+)?/);
+        if (progressMatch) {
+            const percent = progressMatch[1];
+            const speed = progressMatch[2] || "";
+            const eta = progressMatch[3] || "";
+            
+            progContainer.style.display = "flex";
+            document.getElementById("sync_progress_fill").style.width = `${percent}%`;
+            document.getElementById("sync_progress_percent").innerText = `${percent}%`;
+            if (speed) {
+                document.getElementById("sync_progress_speed").innerText = speed;
+            }
+            if (eta) {
+                document.getElementById("sync_progress_eta").innerText = eta;
+            }
+            if (currentFileName) {
+                document.getElementById("sync_progress_file").innerText = currentFileName;
+            }
+        } else {
+            // Check if it is a filename and not a summary/status line
+            const isSummary = line.includes("sending incremental file list") || 
+                              line.includes("receiving incremental file list") ||
+                              line.includes("sent ") || 
+                              line.includes("total size is") || 
+                              line.includes("Starting rsync") ||
+                              line.includes("Sync complete") ||
+                              line.includes("Sync back complete") ||
+                              line.includes("failed") ||
+                              line.includes("Error:") ||
+                              line.startsWith("receiving incremental file list");
+                              
+            if (!isSummary && line.length > 0) {
+                currentFileName = line;
+                document.getElementById("sync_progress_file").innerText = currentFileName;
+            }
+            
+            consoleBox.innerText += event.data + "\n";
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+        }
         
         if (event.data.includes("SUCCESS") || event.data.includes("failed") || event.data.includes("Error:")) {
             syncEventSource.close();
