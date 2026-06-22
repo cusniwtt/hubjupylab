@@ -1,14 +1,14 @@
 <tr id="user-row-{{ u.username }}" {% if is_poll %}hx-swap-oob="true"{% endif %}>
-    <td><strong>{{ u.username }}</strong></td>
-    <td><code>{{ u.port }}</code></td>
-    <td>
+    <td data-label="Username"><strong>{{ u.username }}</strong></td>
+    <td data-label="Port"><code>{{ u.port }}</code></td>
+    <td data-label="Status">
         {% if u.is_running %}
         <span class="badge badge-running">🟢 Running</span>
         {% else %}
         <span class="badge badge-stopped">🔴 Stopped</span>
         {% endif %}
     </td>
-    <td>
+    <td data-label="JupyterLab">
         {% if u.is_running and u.token %}
         <a href="{{ u.jupyter_url }}" target="_blank" class="jupyter-link">
             Open JupyterLab ↗
@@ -17,7 +17,7 @@
         <span style="color: var(--text-secondary); font-style: italic;">Stopped</span>
         {% endif %}
     </td>
-    <td>
+    <td data-label="Actions">
         <div style="display: flex; gap: 0.5rem; align-items: center;">
             {% if u.is_running %}
             <button hx-post="/admin/session/stop/{{ u.username }}" 
@@ -52,7 +52,7 @@
             </form>
         </div>
     </td>
-    <td>
+    <td data-label="GPU">
         <div style="display: flex; align-items: center; gap: 0.5rem;">
             {% if u.gpu_init_status == 'ready' %}
             <span class="badge badge-running" style="background-color: rgba(16, 185, 129, 0.15); color: #10b981;">🟢 Ready</span>

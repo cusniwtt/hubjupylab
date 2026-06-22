@@ -475,3 +475,123 @@ tr.htmx-swapping {
     opacity: 0;
     transition: opacity 0.5s ease-out;
 }
+
+/* ========== RESPONSIVE STYLES ========== */
+
+/* Tablet (< 768px) */
+@media (max-width: 768px) {
+  header {
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .nav-user {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  main {
+    padding: 1rem;
+  }
+
+  .card {
+    padding: 1.25rem;
+  }
+
+  /* Table → stacked cards */
+  .user-table thead {
+    display: none;
+  }
+
+  .user-table, .user-table tbody, .user-table tr, .user-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .user-table tr {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+  }
+
+  .user-table td {
+    padding: 0.4rem 0;
+    border-bottom: none;
+    text-align: left;
+  }
+
+  .user-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    display: block;
+    margin-bottom: 0.15rem;
+  }
+
+  .action-cell {
+    flex-wrap: wrap;
+  }
+
+  .controls-section {
+    flex-direction: column;
+  }
+
+  .jupyter-url-box {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .jupyter-url-box code {
+    word-break: break-all;
+    white-space: normal;
+  }
+
+  .status-section {
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+}
+
+/* Mobile (< 480px) */
+@media (max-width: 480px) {
+  header {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .logo-container h1 {
+    font-size: 1rem;
+  }
+
+  .nav-user span {
+    font-size: 0.75rem;
+  }
+
+  main {
+    padding: 0.75rem;
+  }
+
+  .card {
+    padding: 1rem;
+    border-radius: 8px;
+  }
+
+  .btn {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .toast-container {
+    top: 0.5rem;
+    right: 0.5rem;
+    left: 0.5rem;
+    max-width: 100%;
+  }
+}
+
