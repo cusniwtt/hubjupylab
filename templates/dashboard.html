@@ -169,10 +169,12 @@ function dashboardState() {
         syncing: false,
         showTree: false,
         treeLoaded: false,
-        copyToClipboard() {
-            var urlText = document.getElementById("jupyterUrl").innerText;
+        showJupyterUrl: false,
+        showCodeServerUrl: false,
+        copyToClipboard(id) {
+            var urlText = document.getElementById(id).innerText;
             navigator.clipboard.writeText(urlText).then(() => {
-                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: "JupyterLab URL copied to clipboard!", type: "success" } }));
+                window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: "URL copied to clipboard!", type: "success" } }));
             }, (err) => {
                 window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: "Could not copy text to clipboard.", type: "error" } }));
             });
