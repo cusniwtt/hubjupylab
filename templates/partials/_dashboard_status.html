@@ -30,7 +30,7 @@
 
     <!-- Open Buttons -->
     <a href="{{ jupyter_url }}" target="_blank" class="btn btn-primary" style="text-decoration: none; width: 100%; margin-bottom: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-        <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/png/jupyter.svg" alt="Jupyter" style="width: 18px; height: 18px;">
+        <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/jupyter.svg" alt="Jupyter" style="width: 18px; height: 18px;">
         Open JupyterLab ↗
     </a>
     <a href="{{ code_server_url }}" target="_blank" class="btn btn-outline" style="text-decoration: none; width: 100%; border-color: var(--accent-color); color: var(--accent-color); display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
@@ -131,16 +131,16 @@
         {% if gpu_init_status == 'ready' %}
         {% set separator = '&' if '?' in gpu_endpoint else '?' %}
         <a href="{{ gpu_endpoint }}{{ separator }}token={{ gpu_token }}" target="_blank" class="btn" style="background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-            <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/png/jupyter.svg" alt="Jupyter" style="width: 18px; height: 18px; filter: brightness(0) invert(1);">
-            🚀 Launch GPU JupyterLab
+            <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/jupyter.svg" alt="Jupyter" style="width: 18px; height: 18px; filter: brightness(0) invert(1);">
+            Launch GPU JupyterLab
         </a>
         <a href="{{ gpu_code_server_url }}" target="_blank" class="btn btn-outline" style="border-color: #7c3aed; color: #a78bfa; font-weight: 600; text-decoration: none; text-align: center; width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
             <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/coder.svg" alt="Code Server" style="width: 18px; height: 18px;">
-            💻 Launch GPU Code Server
+            Launch GPU Code Server
         </a>
         {% else %}
         <button class="btn btn-outline" style="opacity: 0.5; cursor: not-allowed; width: 100%;" disabled>
-            🚀 Launch GPU (Not Ready)
+            Launch GPU (Not Ready)
         </button>
         {% endif %}
     </div>
