@@ -197,6 +197,7 @@ const app = new Elysia()
     }
 
     db.updateToken(username, token);
+    user.token = token;
     if (isHtmx) {
       return new Response(render("partials/_dashboard_status.html", {
         is_running: true, user_port: port, jupyter_url: buildJupyterUrl(hostIp, port, token),
@@ -301,6 +302,7 @@ const app = new Elysia()
     }
 
     db.updateToken(username, token);
+    user.token = token;
     if (isHtmx) {
       return new Response(render("partials/_dashboard_status.html", {
         is_running: true, user_port: port, jupyter_url: buildJupyterUrl(hostIp, port, token),
