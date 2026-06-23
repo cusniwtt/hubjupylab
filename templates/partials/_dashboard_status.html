@@ -14,22 +14,65 @@
 
 {% if is_running and jupyter_url %}
 <div style="margin-bottom: 1.5rem;">
-    <label style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Click URL to access JupyterLab:</label>
-    <div class="jupyter-url-box">
-        <code id="jupyterUrl">{{ jupyter_url }}</code>
-        <button @click="copyToClipboard()" class="copy-btn" title="Copy to clipboard">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
-        </button>
+    <!-- Session Password/Token Badge -->
+    <div style="margin-bottom: 1rem; padding: 0.75rem; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 6px;">
+        <span style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Session Password / Token:</span>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <code style="font-size: 0.95rem; color: var(--accent-color); font-weight: bold; letter-spacing: 0.05em;">{{ user.token }}</code>
+            <button @click="navigator.clipboard.writeText('{{ user.token }}').then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Token copied!', type: 'success' } })))" class="copy-btn" title="Copy password/token" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0.2rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+            </button>
+        </div>
     </div>
+
+    <!-- Open Buttons -->
     <a href="{{ jupyter_url }}" target="_blank" class="btn btn-primary" style="text-decoration: none; width: 100%; margin-bottom: 0.5rem;">
         Open JupyterLab ↗
     </a>
     <a href="{{ code_server_url }}" target="_blank" class="btn btn-outline" style="text-decoration: none; width: 100%; border-color: var(--accent-color); color: var(--accent-color);">
         Open Code Server ↗
     </a>
+
+    <!-- Toggle Buttons -->
+    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+        <button @click="showJupyterUrl = !showJupyterUrl" class="btn btn-outline" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; flex: 1; height: auto;">
+            <span x-text="showJupyterUrl ? '🙈 Hide Jupyter URL' : '🔗 Show Jupyter URL'"></span>
+        </button>
+        <button @click="showCodeServerUrl = !showCodeServerUrl" class="btn btn-outline" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; flex: 1; height: auto;">
+            <span x-text="showCodeServerUrl ? '🙈 Hide Coder URL' : '🔗 Show Coder URL'"></span>
+        </button>
+    </div>
+
+    <!-- Jupyter URL Box -->
+    <div x-show="showJupyterUrl" x-transition style="margin-top: 0.75rem;">
+        <label style="display: block; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Direct JupyterLab Link:</label>
+        <div class="jupyter-url-box" style="margin-bottom: 0;">
+            <code id="jupyterUrl">{{ jupyter_url }}</code>
+            <button @click="copyToClipboard('jupyterUrl')" class="copy-btn" title="Copy to clipboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Code Server URL Box -->
+    <div x-show="showCodeServerUrl" x-transition style="margin-top: 0.75rem;">
+        <label style="display: block; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.25rem;">Direct Code Server Link:</label>
+        <div class="jupyter-url-box" style="margin-bottom: 0;">
+            <code id="codeServerUrl">{{ code_server_url }}</code>
+            <button @click="copyToClipboard('codeServerUrl')" class="copy-btn" title="Copy to clipboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
 </div>
 {% else %}
 <div class="jupyter-url-box" style="justify-content: center; padding: 2rem; margin-bottom: 1.5rem;">
