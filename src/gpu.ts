@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { BASE_DIR, PYTHON_VERSION, JUPYTERLAB_VERSION } from "./config";
+import { BASE_DIR, PYTHON_VERSION, JUPYTERLAB_VERSION, SYNC_SIZE_THRESHOLD, SYNC_FILE_THRESHOLD } from "./config";
 import { getUserByUsername, updateGpuInitStatus, getGpuConfig } from "./db";
 
 export const SYNC_EXCLUDES = [
@@ -482,44 +482,79 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
           }
         }
 
-        // Calculate total size
+        const relativePath = subpath ? `${username}/${syncSub}` : username;
+        const remoteDir = `${gpuConf.remote_base_dir}/${username}/${syncSub}`;
+
+        // Calculate total size and decide on Zstd compression
         let totalBytes = 1;
-        emit("Calculating directory size...");
+        let useZstd = false;
+
         const keepAliveTimer = setInterval(() => {
-          emit("Calculating directory size (please wait)...");
+          emit("Evaluating directory status and size (please wait)...");
         }, 2000);
 
         try {
           if (direction === "to") {
-            totalBytes = await getLocalDirSize(targetDir);
-          } else {
-            const remoteDirToMeasure = `${gpuConf.remote_base_dir}/${username}/${syncSub}`;
-            totalBytes = await getRemoteDirSize(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDirToMeasure);
+            emit("Checking remote directory status...");
+            const targetExists = await remoteDirExists(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDir);
+            if (!targetExists) {
+              emit("Calculating local directory size and file count...");
+              const localSize = await getLocalDirSize(targetDir);
+              const localCount = await getLocalFileCount(targetDir);
+              if (localSize > SYNC_SIZE_THRESHOLD || localCount > SYNC_FILE_THRESHOLD) {
+                useZstd = true;
+                totalBytes = localSize;
+              } else {
+                totalBytes = localSize;
+              }
+            } else {
+              emit("Remote directory already exists. Bypassing compression for direct sync...");
+              // Get local size just for log/progress info
+              totalBytes = await getLocalDirSize(targetDir);
+            }
+          } else { // direction === "from"
+            emit("Checking local directory status...");
+            const targetExists = existsSync(targetDir);
+            if (!targetExists) {
+              emit("Calculating remote directory size and file count...");
+              const remoteDirToMeasure = `${gpuConf.remote_base_dir}/${username}/${syncSub}`;
+              const remoteSize = await getRemoteDirSize(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDirToMeasure);
+              const remoteCount = await getRemoteFileCount(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDirToMeasure);
+              if (remoteSize > SYNC_SIZE_THRESHOLD || remoteCount > SYNC_FILE_THRESHOLD) {
+                useZstd = true;
+                totalBytes = remoteSize;
+              } else {
+                totalBytes = remoteSize;
+              }
+            } else {
+              emit("Local directory already exists. Bypassing compression for direct sync...");
+              // Get remote size just for log/progress info
+              const remoteDirToMeasure = `${gpuConf.remote_base_dir}/${username}/${syncSub}`;
+              totalBytes = await getRemoteDirSize(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDirToMeasure);
+            }
           }
         } finally {
           clearInterval(keepAliveTimer);
         }
 
-        const TAR_THRESHOLD_BYTES = 50 * 1024 * 1024; // 50 MB
-        const relativePath = subpath ? `${username}/${syncSub}` : username;
-        const remoteDir = `${gpuConf.remote_base_dir}/${username}/${syncSub}`;
-
-        if (totalBytes <= TAR_THRESHOLD_BYTES) {
-          // Direct rsync (original logic)
+        if (!useZstd) {
+          // Direct rsync
           const localPath = targetDir + "/";
           const remotePath = `${gpuConf.ssh_user}@${sshHost}:${gpuConf.remote_base_dir}/${username}/${syncSub}/`;
 
           const src = direction === "to" ? localPath : remotePath;
           const dst = direction === "to" ? remotePath : localPath;
 
+          const rsyncExcludeArgs = SYNC_EXCLUDES.flatMap(p => ["--exclude", p]);
+
           const cmd = [
             "rsync", "-az", "--info=progress2",
-            "--exclude", "*venv*", "--exclude", "__pycache__/", "--exclude", ".ipynb_checkpoints/",
+            ...rsyncExcludeArgs,
             "-e", `ssh -p ${sshPort} -i ${gpuConf.ssh_key_path} -o StrictHostKeyChecking=no`,
             src, dst
           ];
 
-          emit(`Directory size: ${(totalBytes / (1024 * 1024)).toFixed(1)} MB (under threshold). Starting direct rsync...`);
+          emit(`Directory size: ${(totalBytes / (1024 * 1024)).toFixed(1)} MB. Starting direct rsync...`);
 
           const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
           activeProc = proc;
@@ -554,7 +589,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
           }
         } else {
           // Large directory sync using Tar + Zstd + Rsync + Unpack
-          emit(`Directory size: ${(totalBytes / (1024 * 1024)).toFixed(1)} MB (exceeds ${(TAR_THRESHOLD_BYTES / (1024 * 1024)).toFixed(0)} MB threshold). Using Tar-Zstd-Rsync...`);
+          emit(`Directory size: ${(totalBytes / (1024 * 1024)).toFixed(1)} MB. Using Tar-Zstd-Rsync...`);
 
           const localTempArchive = join(BASE_DIR, `.${username}_sync.tar.zst`);
           const remoteTempArchive = `${gpuConf.remote_base_dir}/.${username}_sync.tar.zst`;
@@ -562,8 +597,9 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
           if (direction === "to") {
             // 1. Compress locally
             emit("Compressing files locally using zstd...");
+            const localTarExcludeArgs = SYNC_EXCLUDES.map(p => `--exclude=${p}`);
             const compressCmd = [
-              "tar", "--exclude=*venv*", "--exclude=__pycache__", "--exclude=.ipynb_checkpoints",
+              "tar", ...localTarExcludeArgs,
               "-I", "zstd -T0", "-cf", localTempArchive, "-C", BASE_DIR, relativePath
             ];
             const compressExit = await runCmd(compressCmd, "Compressing files locally");
@@ -632,10 +668,11 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
             // "from" direction (download)
             // 1. Compress remotely
             emit("Compressing files on GPU VM using zstd...");
+            const remoteTarExcludeStr = SYNC_EXCLUDES.map(p => `--exclude="${p}"`).join(" ");
             const remoteCompressCmd = [
               "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
               "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
-              `tar --exclude="*venv*" --exclude="__pycache__" --exclude=".ipynb_checkpoints" -I "zstd -T0" -cf ${remoteTempArchive} -C ${gpuConf.remote_base_dir} ${relativePath}`
+              `tar ${remoteTarExcludeStr} -I "zstd -T0" -cf ${remoteTempArchive} -C ${gpuConf.remote_base_dir} ${relativePath}`
             ];
             const compressExit = await runCmd(remoteCompressCmd, "Compressing files remotely");
             if (compressExit !== 0) {
