@@ -12,6 +12,7 @@ export const PYTHON_VERSION = Bun.env.PYTHON_VERSION ?? "3.14";
 
 export const JUPYTER_PORT_START = 8081;
 export const JUPYTER_PORT_END = 8090;
+export const CODE_SERVER_PORT_OFFSET = 100;
 
 export const SYNC_SIZE_THRESHOLD = parseInt(Bun.env.SYNC_SIZE_THRESHOLD ?? "1073741824", 10);
 export const SYNC_FILE_THRESHOLD = parseInt(Bun.env.SYNC_FILE_THRESHOLD ?? "5000", 10);

@@ -179,5 +179,6 @@ describe("GPU Module", () => {
     expect(SYNC_EXCLUDES).toContain(".conda");
     expect(SYNC_EXCLUDES).toContain(".local");
     expect(SYNC_EXCLUDES).toContain("nohup.out");
+    expect(SYNC_EXCLUDES).toContain(".code-server");
   });
 });

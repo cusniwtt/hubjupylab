@@ -11,7 +11,8 @@ export const SYNC_EXCLUDES = [
   ".cache",
   ".conda",
   ".local",
-  "nohup.out"
+  "nohup.out",
+  ".code-server"
 ];
 
 async function remoteDirExists(
