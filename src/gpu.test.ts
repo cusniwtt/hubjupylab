@@ -32,7 +32,7 @@ describe("GPU Module", () => {
   });
 
   test("testGpuSsh returns false if host is empty", async () => {
-    const [ok, msg] = await testGpuSsh("");
+    const [ok, msg] = await testGpuSsh("", 22, "/dummy/key", "root");
     expect(ok).toBe(false);
     expect(msg).toContain("not configured");
   });
@@ -155,10 +155,17 @@ describe("GPU Module", () => {
       "/dummy/key",
       "root",
       "token",
-      "http://endpoint;inject"
+      "http://endpoint;inject",
+      "/workspace"
     );
     const reader = stream.getReader();
     const { value } = await reader.read();
     expect(value).toContain("Error: Invalid GPU endpoint structure or dangerous characters detected");
+  });
+
+  test("Configuration thresholds have correct default values", () => {
+    const { SYNC_SIZE_THRESHOLD, SYNC_FILE_THRESHOLD } = require("./config");
+    expect(SYNC_SIZE_THRESHOLD).toBe(1073741824); // 1 GB
+    expect(SYNC_FILE_THRESHOLD).toBe(5000); // 5000 files
   });
 });
