@@ -44,6 +44,10 @@ function buildJupyterUrl(hostIp: string, port: number, token: string): string {
   return `http://${hostIp}:${port}/lab?token=${token}`;
 }
 
+function buildCodeServerUrl(hostIp: string, port: number): string {
+  return `http://${hostIp}:${port}/`;
+}
+
 function resolveHostIp(request: Request): string {
   if (config.HOST_IP) return config.HOST_IP;
   const url = new URL(request.url);
@@ -57,7 +61,8 @@ async function getEnrichedUsers(request: Request): Promise<Record<string, any>[]
   for (const u of users) {
     const isRunning = await spawner.isSessionRunning(u.username);
     const jupyterUrl = isRunning && u.token ? buildJupyterUrl(hostIp, u.port!, u.token) : "";
-    enriched.push({ ...u, is_running: isRunning, jupyter_url: jupyterUrl });
+    const codeServerUrl = isRunning && u.token ? buildCodeServerUrl(hostIp, u.port! + config.CODE_SERVER_PORT_OFFSET) : "";
+    enriched.push({ ...u, is_running: isRunning, jupyter_url: jupyterUrl, code_server_url: codeServerUrl });
   }
   return enriched;
 }
@@ -68,7 +73,8 @@ async function enrichUser(username: string, request: Request): Promise<Record<st
   const hostIp = resolveHostIp(request);
   const isRunning = await spawner.isSessionRunning(username);
   const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
-  return { ...user, is_running: isRunning, jupyter_url: jupyterUrl };
+  const codeServerUrl = isRunning && user.token ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
+  return { ...user, is_running: isRunning, jupyter_url: jupyterUrl, code_server_url: codeServerUrl };
 }
 
 // Convert ReadableStream<string> to ReadableStream<Uint8Array> for SSE Responses
@@ -140,13 +146,16 @@ const app = new Elysia()
     const hostIp = resolveHostIp(request);
     const isRunning = await spawner.isSessionRunning(user.username);
     const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
+    const codeServerUrl = isRunning && user.token ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
+    const gpuCodeServerUrl = user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "";
     const hasGpu = !!user.gpu_endpoint;
 
     return new Response(render("dashboard.html", {
       user, is_running: isRunning, user_port: user.port,
-      jupyter_url: jupyterUrl, error: query.error ?? null,
+      jupyter_url: jupyterUrl, code_server_url: codeServerUrl, error: query.error ?? null,
       success: query.success ?? null, has_gpu: hasGpu,
       gpu_endpoint: user.gpu_endpoint ?? "",
+      gpu_code_server_url: gpuCodeServerUrl,
       gpu_init_status: user.gpu_init_status ?? "",
       gpu_token: user.gpu_token ?? ""
     }), { headers: { "Content-Type": "text/html" } });
@@ -169,10 +178,13 @@ const app = new Elysia()
       if (isHtmx) {
         const isRunning = await spawner.isSessionRunning(username);
         const jurl = isRunning && user.token ? buildJupyterUrl(hostIp, port, user.token) : "";
+        const csurl = isRunning && user.token ? buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET) : "";
         return new Response(render("partials/_dashboard_status.html", {
           is_running: isRunning, user_port: port, jupyter_url: jurl,
+          code_server_url: csurl,
           has_gpu: !!user.gpu_endpoint,
           gpu_endpoint: user.gpu_endpoint ?? "",
+          gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
           gpu_init_status: user.gpu_init_status ?? "",
           gpu_token: user.gpu_token ?? "",
           user: user
@@ -188,8 +200,10 @@ const app = new Elysia()
     if (isHtmx) {
       return new Response(render("partials/_dashboard_status.html", {
         is_running: true, user_port: port, jupyter_url: buildJupyterUrl(hostIp, port, token),
+        code_server_url: buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET),
         has_gpu: !!user.gpu_endpoint,
         gpu_endpoint: user.gpu_endpoint ?? "",
+        gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
         gpu_init_status: user.gpu_init_status ?? "",
         gpu_token: user.gpu_token ?? "",
         user: user
@@ -216,10 +230,13 @@ const app = new Elysia()
       if (isHtmx) {
         const isRunning = await spawner.isSessionRunning(username);
         const jurl = isRunning && user.token ? buildJupyterUrl(hostIp, port, user.token) : "";
+        const csurl = isRunning && user.token ? buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET) : "";
         return new Response(render("partials/_dashboard_status.html", {
           is_running: isRunning, user_port: port, jupyter_url: jurl,
+          code_server_url: csurl,
           has_gpu: !!user.gpu_endpoint,
           gpu_endpoint: user.gpu_endpoint ?? "",
+          gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
           gpu_init_status: user.gpu_init_status ?? "",
           gpu_token: user.gpu_token ?? "",
           user: user
@@ -235,8 +252,10 @@ const app = new Elysia()
     if (isHtmx) {
       return new Response(render("partials/_dashboard_status.html", {
         is_running: false, user_port: port, jupyter_url: "",
+        code_server_url: "",
         has_gpu: !!user.gpu_endpoint,
         gpu_endpoint: user.gpu_endpoint ?? "",
+        gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
         gpu_init_status: user.gpu_init_status ?? "",
         gpu_token: user.gpu_token ?? "",
         user: user
@@ -266,8 +285,10 @@ const app = new Elysia()
       if (isHtmx) {
         return new Response(render("partials/_dashboard_status.html", {
           is_running: false, user_port: port, jupyter_url: "",
+          code_server_url: "",
           has_gpu: !!user.gpu_endpoint,
           gpu_endpoint: user.gpu_endpoint ?? "",
+          gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
           gpu_init_status: user.gpu_init_status ?? "",
           gpu_token: user.gpu_token ?? "",
           user: user
@@ -283,8 +304,10 @@ const app = new Elysia()
     if (isHtmx) {
       return new Response(render("partials/_dashboard_status.html", {
         is_running: true, user_port: port, jupyter_url: buildJupyterUrl(hostIp, port, token),
+        code_server_url: buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET),
         has_gpu: !!user.gpu_endpoint,
         gpu_endpoint: user.gpu_endpoint ?? "",
+        gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
         gpu_init_status: user.gpu_init_status ?? "",
         gpu_token: user.gpu_token ?? "",
         user: user
@@ -302,10 +325,13 @@ const app = new Elysia()
     const hostIp = resolveHostIp(request);
     const isRunning = await spawner.isSessionRunning(user.username);
     const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
+    const codeServerUrl = isRunning && user.token ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
+    const gpuCodeServerUrl = user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "";
     return new Response(render("partials/_dashboard_status.html", {
       is_running: isRunning, user_port: user.port,
-      jupyter_url: jupyterUrl, has_gpu: !!user.gpu_endpoint,
+      jupyter_url: jupyterUrl, code_server_url: codeServerUrl, has_gpu: !!user.gpu_endpoint,
       gpu_endpoint: user.gpu_endpoint ?? "",
+      gpu_code_server_url: gpuCodeServerUrl,
       gpu_init_status: user.gpu_init_status ?? "",
       gpu_token: user.gpu_token ?? "", user
     }), { headers: { "Content-Type": "text/html" } });
