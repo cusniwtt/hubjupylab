@@ -41,6 +41,20 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 - **Rsync Folder Explorer**: Collapsible folder tree browser allowing users to select directory paths to sync instead of typing them manually.
 - **Status Auto-Update**: Continuous 5-second background polling to auto-update local server and GPU status on both user and admin dashboards using HTMX OOB swaps without interrupting open panels.
 
+### 6. code-server Integration
+- **Concurrent Spawning**: Runs `code-server` alongside `JupyterLab` in the same tmux session (`hub_{username}` locally and `gpu_{username}` remotely) in separate windows.
+- **Port Mapping**: Local code-server port is dynamically set at `JupyterLab port + 100`; remote GPU VM runs code-server on port `8889`.
+- **Credential Sharing**: Reuses JupyterLab session token as code-server authentication password.
+- **Exclusion Filters**: Added `.code-server` configuration to `SYNC_EXCLUDES` to prevent synchronization overhead.
+
+### 7. UI Dashboard Layout Refinements
+- **Badge Indicator**: Added Session Password/Token display card above JupyterLab launcher button.
+- **Collapsible URL Toggles**: Direct JupyterLab and Code Server URL boxes moved below launcher buttons and hidden behind Alpine.js show/hide toggles.
+- **Button Icons**: Embedded SVG brand icons (Jupyter and Code Server logos) within both local and remote GPU VM launcher buttons.
+
+### 8. Aesthetic Branding & Palette Update
+- **Dark Palette Migration**: Reconfigured site theme with Color Hunt palette: `#000000` (Pure Black background), `#233d4d` (Deep Teal card background/radial-gradients), `#fe7f2d` (Vibrant Orange accent highlights and hover), and `#eaecf0` (Light Gray text, labels, and borders).
+
 ---
 
 ## Technical Details
