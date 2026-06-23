@@ -31,8 +31,11 @@
                     </svg>
                 </button>
             </div>
-            <a href="{{ jupyter_url }}" target="_blank" class="btn btn-primary" style="text-decoration: none; width: 100%;">
+            <a href="{{ jupyter_url }}" target="_blank" class="btn btn-primary" style="text-decoration: none; width: 100%; margin-bottom: 0.5rem;">
                 Open JupyterLab ↗
+            </a>
+            <a href="{{ code_server_url }}" target="_blank" class="btn btn-outline" style="text-decoration: none; width: 100%; border-color: var(--accent-color); color: var(--accent-color);">
+                Open Code Server ↗
             </a>
         </div>
         {% else %}
@@ -88,14 +91,17 @@
                 {% endif %}
             </div>
             
-            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; width: 100%;">
                 {% if user.gpu_init_status == 'ready' %}
                 {% set separator = '&' if '?' in gpu_endpoint else '?' %}
-                <a href="{{ gpu_endpoint }}{{ separator }}token={{ user.gpu_token }}" target="_blank" class="btn" style="flex: 2; background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%;">
-                    🚀 Launch GPU Session
+                <a href="{{ gpu_endpoint }}{{ separator }}token={{ user.gpu_token }}" target="_blank" class="btn" style="background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%;">
+                    🚀 Launch GPU JupyterLab
+                </a>
+                <a href="{{ gpu_code_server_url }}" target="_blank" class="btn btn-outline" style="border-color: #7c3aed; color: #a78bfa; font-weight: 600; text-decoration: none; text-align: center; width: 100%;">
+                    💻 Launch GPU Code Server
                 </a>
                 {% else %}
-                <button class="btn btn-outline" style="flex: 2; opacity: 0.5; cursor: not-allowed; width: 100%;" disabled>
+                <button class="btn btn-outline" style="opacity: 0.5; cursor: not-allowed; width: 100%;" disabled>
                     🚀 Launch GPU (Not Ready)
                 </button>
                 {% endif %}
