@@ -1,6 +1,6 @@
 # HubJupyLab
 
-HubJupyLab is a lightweight JupyterLab Hub designed for small teams (up to 9 users). It runs on a single host machine, spawning user JupyterLab instances inside `tmux` sessions. Each user is isolated in their own directory with a dedicated virtual environment managed by `uv`.
+HubJupyLab is a lightweight JupyterLab Hub built with **TypeScript, Bun, and Elysia JS** designed for small teams (up to 9 users). It runs on a single host machine, spawning user JupyterLab instances inside `tmux` sessions. Each user is isolated in their own directory with a dedicated virtual environment managed by `uv` (on the local VM) and remote GPU VMs.
 
 ## Features
 
@@ -11,6 +11,7 @@ HubJupyLab is a lightweight JupyterLab Hub designed for small teams (up to 9 use
 - **Clean Admin Dashboard**: Create/delete users, start/stop/restart any user's session, see server status, and optionally clean up user files.
 - **User Dashboard**: Users can start, stop, restart, and copy their JupyterLab endpoint URL.
 - **Modern Interactive UI**: Powered by [HTMX](file:///home/hubjupylab/hubjupylab/static/vendor/htmx.min.js) and [Alpine.js](file:///home/hubjupylab/hubjupylab/static/vendor/alpine.min.js) for zero page reloads, live controls, inline form/dropdown updates, and global toast alerts.
+- **GPU VM Spawning & Syncing**: Assign remote GPU VMs (e.g. RunPod) to users with automated initialization (venv, JupyterLab) over SSH, and manual sync controls ("Sync To GPU" and "Sync From GPU") utilizing a real-time parsed multi-threaded Zstd-compressed Tar progress stream.
 
 ---
 
@@ -18,25 +19,26 @@ HubJupyLab is a lightweight JupyterLab Hub designed for small teams (up to 9 use
 
 Before running HubJupyLab, make sure the following are installed on the host system:
 
-### 1. `uv` (Fast Python Package Installer)
-If not installed, install it system-wide:
+### 1. Bun (JavaScript Runtime)
+Bun is used to run the Elysia JS web server:
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+### 2. `uv` (Fast Python Package Installer)
+If not installed, install it system-wide to provision local python environments:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 2. Python 3.14
-Ensure Python 3.14 is available on the host system (managed by `uv` or system repository). `uv` will download it automatically when creating virtual environments if it's not found.
+### 3. Python 3.14
+Ensure Python 3.14 is available on the host system. `uv` will download it automatically when creating virtual environments if it's not found.
 
-### 3. `tmux`
+### 4. `tmux`
 HubJupyLab runs JupyterLab inside tmux sessions.
-- **Ubuntu/Debian**:
-  ```bash
-  sudo apt update && sudo apt install -y tmux
-  ```
-- **RHEL/CentOS/Rocky**:
-  ```bash
-  sudo dnf install -y tmux
-  ```
+```bash
+sudo apt update && sudo apt install -y tmux zstd
+```
 
 ---
 
@@ -62,7 +64,7 @@ HubJupyLab runs JupyterLab inside tmux sessions.
 ### Development / Manual Run
 To start the hub manually:
 ```bash
-uv run uvicorn main:app --host 0.0.0.0 --port 8080
+bun run src/index.ts
 ```
 Then access the dashboard at `http://<host-ip>:8080`.
 
@@ -73,11 +75,15 @@ To configure HubJupyLab to run on system startup:
    ```bash
    sudo cp hubjupylab.service /etc/systemd/system/
    ```
-2. Reload systemd daemon:
+2. Set correct directory permissions:
+   ```bash
+   sudo chown -R hubjupylab:hubjupylab /home/hubjupylab/hubjupylab /home/hubjupylab/hubjupylab.db*
+   ```
+3. Reload systemd daemon:
    ```bash
    sudo systemctl daemon-reload
    ```
-3. Enable and start the service:
+4. Enable and start the service:
    ```bash
    sudo systemctl enable --now hubjupylab
    ```
@@ -86,33 +92,34 @@ To configure HubJupyLab to run on system startup:
    sudo systemctl status hubjupylab
    ```
 
+### Systemd Linger (Crucial for tmux persistence)
+
+To prevent systemd from killing user tmux sessions when the `hubjupylab` service restarts:
+
+1. **Enable user linger** for the `hubjupylab` user:
+   ```bash
+   sudo loginctl enable-linger hubjupylab
+   ```
+   *This ensures a systemd user manager instance runs continuously for the user even when logged out.*
+
+2. **Configure Service Environment**:
+   Ensure the systemd service file `/etc/systemd/system/hubjupylab.service` has the `XDG_RUNTIME_DIR` set under the `[Service]` section:
+   ```ini
+   Environment=XDG_RUNTIME_DIR=/run/user/1003
+   ```
+   *(Replace `1003` with the actual UID of the `hubjupylab` user, which can be found via `id -u hubjupylab`)*
+
+3. **Reload and Restart**:
+   ```bash
+   sudo systemctl daemon-reload
+   ```
+
 ---
 
 ## Architecture details
 
 - **User directories**: Each user gets a directory at `{BASE_DIR}/{username}` containing their `.venv/` and notebook workspace.
-- **SQLite Database**: A SQLite file `hubjupylab.db` is stored inside `{BASE_DIR}` to track user credentials, ports, and current session tokens.
-- **tmux Sessions**: Created using session name `hub_{username}`. Use `tmux list-sessions` to view running instances on the host system.
+- **SQLite Database**: A SQLite file `hubjupylab.db` is stored inside `{BASE_DIR}` to track user credentials, ports, current session tokens, and assigned GPU configs.
+- **tmux Sessions**: Created using session name `hub_{username}` locally and `gpu_{username}` on remote VMs. Use `tmux list-sessions` to view running instances.
+- **GPU Synchronization**: Manual Zstd-compressed Tar stream synchronizes files between local `{BASE_DIR}/{username}` and remote workspace over SSH.
 
----
-
-## Next Rolling Feature: Remote GPU Kernels (SSH)
-
-**Goal**: Run notebook UI on A_VM (non-GPU), execute code on B_VM (RunPod GPU instance) via SSH remote kernels.
-
-**Approach considered**: `remote_ikernel` — installs kernel specs in user venvs that SSH into B_VM and launch `ipykernel` there. User sees "Python 3 (GPU)" in JupyterLab kernel picker.
-
-**Draft plan (6 steps)**:
-1. DB `gpu_vms` table — store registered GPU VM connection info
-2. `remote_kernel.py` — manage kernel spec installation/removal per user
-3. `spawner.py` — install `remote_ikernel` into user venvs
-4. Admin routes — GPU VM CRUD + SSH test + sync kernels
-5. Admin template — `gpu_admin.html` for VM management
-6. End-to-end test
-
-**Key constraints**:
-- RunPod pods are ephemeral (spin up/down, new IP each time, no persistent data)
-- Admin manually registers new pod IP via Hub UI each spin-up
-- `ipykernel` must be installed on B_VM each time (not persistent)
-
-**Status**: Draft — pending simplification based on actual usage pattern.

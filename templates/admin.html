@@ -2,78 +2,283 @@
 
 {% block title %}Admin Dashboard - HubJupyLab{% endblock %}
 
+{% block head %}
+<style>
+/* Log Viewer styles integrated */
+.logs-container {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 1.5rem;
+    height: 600px;
+}
+.logs-sidebar {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+.logs-viewer {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    overflow: hidden;
+}
+.logs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.log-item {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+    color: var(--text-primary);
+}
+.log-item:hover, .log-item.active {
+    background: rgba(99, 102, 241, 0.1);
+    border-color: var(--accent-color);
+}
+.log-item-header {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    word-break: break-all;
+}
+.log-item-meta {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    display: flex;
+    justify-content: space-between;
+}
+.log-badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+.badge-gpu { background: rgba(168, 85, 247, 0.2); color: #c084fc; }
+.badge-rsync-to { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+.badge-rsync-from { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+
+.log-content-area {
+    background: #090d16;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 1rem;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.85rem;
+    color: #e2e8f0;
+    white-space: pre-wrap;
+    overflow-y: auto;
+    flex: 1;
+}
+.filter-box {
+    display: flex;
+    gap: 0.5rem;
+}
+.filter-select {
+    background: #0f172a;
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    flex: 1;
+}
+
+@media (max-width: 768px) {
+    .logs-container {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+    .logs-viewer {
+        height: 400px;
+    }
+}
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="admin-grid">
-    <!-- Left Column: User List -->
-    <div class="card">
-        <div class="section-title">
-            <div>
-                <h2>JupyterLab Hub Users</h2>
-                <span style="font-size: 0.875rem; color: var(--text-secondary);">Ports 8081 - 8089</span>
-            </div>
-            <a href="/admin/logs" class="btn btn-sm btn-outline" style="text-decoration: none;">📜 View Logs</a>
-        </div>
-        
-        {% if users %}
-        <table class="user-table">
-            <thead>
-                <tr>
-                    <th>Username</th>
-                    <th>Port</th>
-                    <th>Status</th>
-                    <th>JupyterLab Endpoint</th>
-                    <th>Action</th>
-                    <th>GPU Status</th>
-                </tr>
-            </thead>
-            <tbody id="user-table-body">
-                {% for u in users %}
-                {% include "partials/_admin_user_row.html" %}
-                {% endfor %}
-            </tbody>
-        </table>
-        <!-- Hidden polling div to auto-update the table rows -->
-        <div hx-get="/admin/users/status-poll" hx-trigger="every 5s" hx-swap="none" style="display: none;"></div>
-        {% else %}
-        <p style="color: var(--text-secondary); text-align: center; margin-top: 2rem;">No users created yet. Use the form below to create one.</p>
-        {% endif %}
+<div x-data="{ activeTab: 'users' }" x-init="
+    const urlParams = new URLSearchParams(window.location.search);
+    const tabParam = urlParams.get('tab');
+    if (tabParam && ['users', 'logs', 'gpu'].includes(tabParam)) {
+        activeTab = tabParam;
+    }
+    $watch('activeTab', value => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('tab', value);
+        window.history.replaceState({}, '', url.toString());
+    });
+">
+    <!-- Sleek horizontal tabs at the top -->
+    <div class="tabs-container">
+        <button class="tab-btn" :class="{ 'active': activeTab === 'users' }" @click="activeTab = 'users'">
+            👥 Users
+        </button>
+        <button class="tab-btn" :class="{ 'active': activeTab === 'logs' }" @click="activeTab = 'logs'">
+            📜 Logs
+        </button>
+        <button class="tab-btn" :class="{ 'active': activeTab === 'gpu' }" @click="activeTab = 'gpu'">
+            ⚙️ GPU Settings
+        </button>
     </div>
 
-    <!-- Create User Modal Overlay -->
-    <div id="createUserModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); z-index: 1000; justify-content: center; align-items: center;">
-        <div class="card" style="width: 100%; max-width: 400px; margin: 1rem; border: 1px solid var(--border-color); animation: modalFadeIn 0.3s ease;">
-            <div class="section-title" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
-                <h2>Create New User</h2>
-                <button onclick="closeCreateUserModal()" class="btn btn-outline btn-sm" style="padding: 0.2rem 0.5rem; font-size: 0.9rem; border: none; background: transparent; color: var(--text-secondary); cursor: pointer;">✕</button>
+    <!-- Tab 1: Users -->
+    <div x-show="activeTab === 'users'" class="admin-grid" x-transition>
+        <div class="card">
+            <div class="section-title">
+                <div>
+                    <h2>JupyterLab Hub Users</h2>
+                    <span style="font-size: 0.875rem; color: var(--text-secondary);">Ports 8081 - 8089</span>
+                </div>
             </div>
-            <form hx-post="/admin/users"
-                  hx-target="#user-table-body"
-                  hx-swap="innerHTML"
-                  hx-on::after-request="if(event.detail.successful) { closeCreateUserModal(); this.reset(); }">
-                <div class="form-group" style="margin-bottom: 1rem;">
-                    <label for="new_username" style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Username</label>
-                    <input type="text" id="new_username" name="username" class="form-control" placeholder="e.g. wayu" pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, underscores and hyphens allowed" required style="width: 100%;">
+            
+            {% if users %}
+            <table class="user-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Port</th>
+                        <th>Status</th>
+                        <th>JupyterLab Endpoint</th>
+                        <th>Action</th>
+                        <th>GPU Status</th>
+                    </tr>
+                </thead>
+                <tbody id="user-table-body">
+                    {% for u in users %}
+                    {% include "partials/_admin_user_row.html" %}
+                    {% endfor %}
+                </tbody>
+            </table>
+            <!-- Hidden polling div to auto-update the table rows -->
+            <div hx-get="/admin/users/status-poll" hx-trigger="every 5s" hx-swap="none" style="display: none;"></div>
+            {% else %}
+            <p style="color: var(--text-secondary); text-align: center; margin-top: 2rem;">No users created yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Tab 2: Logs -->
+    <div x-show="activeTab === 'logs'" x-transition>
+        <div class="logs-container">
+            <!-- Sidebar: Log List & Filters -->
+            <div class="logs-sidebar">
+                <div class="filter-box">
+                    <select id="typeFilter" class="filter-select" onchange="filterLogs()">
+                        <option value="all">All Types</option>
+                        <option value="gpu-init">GPU Init</option>
+                        <option value="rsync-to">Sync To GPU</option>
+                        <option value="rsync-from">Sync From GPU</option>
+                    </select>
+                    <input type="text" id="userFilter" class="filter-select" placeholder="Filter user..." oninput="filterLogs()" style="flex: 1.5;">
                 </div>
-                <div class="form-group" style="margin-bottom: 1.5rem;">
-                    <label for="new_password" style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Password</label>
-                    <input type="password" id="new_password" name="password" class="form-control" placeholder="Enter user password" required style="width: 100%;">
+
+                <div class="logs-list" id="logsList">
+                    {% for log in logs %}
+                    <button class="log-item" onclick="loadLog('{{ log.name }}', this)" data-type="{{ log.type }}" data-name="{{ log.name }}">
+                        <div class="log-item-header">{{ log.name }}</div>
+                        <div class="log-item-meta">
+                            {% if log.type == 'gpu-init' %}
+                            <span class="log-badge badge-gpu">gpu-init</span>
+                            {% elif log.type == 'rsync-to' %}
+                            <span class="log-badge badge-rsync-to">sync-to</span>
+                            {% else %}
+                            <span class="log-badge badge-rsync-from">sync-from</span>
+                            {% endif %}
+                            <span>{{ (log.size / 1024) | round(1) }} KB</span>
+                        </div>
+                    </button>
+                    {% else %}
+                    <p style="color: var(--text-secondary); text-align: center; margin-top: 2rem;">No logs found.</p>
+                    {% endfor %}
                 </div>
-                <div style="display: flex; gap: 1rem;">
-                    <button type="button" onclick="closeCreateUserModal()" class="btn btn-outline" style="flex: 1;">Cancel</button>
-                    <button type="submit" class="btn btn-primary" style="flex: 1;">Create User</button>
+            </div>
+
+            <!-- Main Pane: Log Contents -->
+            <div class="logs-viewer">
+                <h3 id="currentLogTitle" style="font-size: 1.1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">Select a log file to view...</h3>
+                <div class="log-content-area" id="logContent">Select a log from the sidebar to load its output contents here.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab 3: GPU Settings -->
+    <div x-show="activeTab === 'gpu'" class="admin-grid" x-transition>
+        <div class="card">
+            <div class="section-title">
+                <h2>Global GPU configuration</h2>
+            </div>
+            <form hx-post="/admin/gpu/config" hx-swap="none" style="display: flex; flex-direction: column; gap: 1rem;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem; display: block;">SSH Username</label>
+                        <input type="text" name="ssh_user" value="{{ gpu_config.ssh_user }}" placeholder="e.g. root" class="form-control" required style="width: 100%;">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem; display: block;">SSH Key Path</label>
+                        <input type="text" name="ssh_key_path" value="{{ gpu_config.ssh_key_path }}" placeholder="e.g. /home/hubjupylab/.ssh/id_ed25519" class="form-control" required style="width: 100%;">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem; display: block;">Remote Base Workspace Dir</label>
+                        <input type="text" name="remote_base_dir" value="{{ gpu_config.remote_base_dir }}" placeholder="e.g. /workspace" class="form-control" required style="width: 100%;">
+                    </div>
+                </div>
+                <div style="text-align: right; margin-top: 0.5rem;">
+                    <button type="submit" class="btn btn-primary">Save Global Config</button>
                 </div>
             </form>
         </div>
     </div>
+</div>
 
-    <style>
-    @keyframes modalFadeIn {
-        from { opacity: 0; transform: translateY(-20px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    </style>
+<!-- Create User Modal Overlay -->
+<div id="createUserModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); z-index: 1000; justify-content: center; align-items: center;">
+    <div class="card" style="width: 100%; max-width: 400px; margin: 1rem; border: 1px solid var(--border-color); animation: modalFadeIn 0.3s ease;">
+        <div class="section-title" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+            <h2>Create New User</h2>
+            <button onclick="closeCreateUserModal()" class="btn btn-outline btn-sm" style="padding: 0.2rem 0.5rem; font-size: 0.9rem; border: none; background: transparent; color: var(--text-secondary); cursor: pointer;">✕</button>
+        </div>
+        <form hx-post="/admin/users"
+              hx-target="#user-table-body"
+              hx-swap="innerHTML"
+              hx-on::after-request="if(event.detail.successful) { closeCreateUserModal(); this.reset(); }">
+            <div class="form-group" style="margin-bottom: 1rem;">
+                <label for="new_username" style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Username</label>
+                <input type="text" id="new_username" name="username" class="form-control" placeholder="e.g. wayu" pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, underscores and hyphens allowed" required style="width: 100%;">
+            </div>
+            <div class="form-group" style="margin-bottom: 1.5rem;">
+                <label for="new_password" style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Password</label>
+                <input type="password" id="new_password" name="password" class="form-control" placeholder="Enter user password" required style="width: 100%;">
+            </div>
+            <div style="display: flex; gap: 1rem;">
+                <button type="button" onclick="closeCreateUserModal()" class="btn btn-outline" style="flex: 1;">Cancel</button>
+                <button type="submit" class="btn btn-primary" style="flex: 1;">Create User</button>
+            </div>
+        </form>
+    </div>
+</div>
 
-
+<style>
+@keyframes modalFadeIn {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+</style>
 
 <script>
 function openCreateUserModal() {
@@ -175,6 +380,48 @@ function startGPUInit(username) {
         }
     };
 }
+
+// Log functions
+function filterLogs() {
+    const type = document.getElementById('typeFilter').value;
+    const user = document.getElementById('userFilter').value.toLowerCase();
+    const items = document.querySelectorAll('.log-item');
+
+    items.forEach(item => {
+        const itemType = item.getAttribute('data-type');
+        const itemName = item.getAttribute('data-name').toLowerCase();
+        
+        const matchesType = (type === 'all' || itemType === type);
+        const matchesUser = itemName.includes(user);
+
+        if (matchesType && matchesUser) {
+            item.style.display = 'block';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+}
+
+function loadLog(filename, element) {
+    // Highlight active item
+    document.querySelectorAll('.log-item').forEach(item => item.classList.remove('active'));
+    element.classList.add('active');
+
+    document.getElementById('currentLogTitle').innerText = filename;
+    const contentBox = document.getElementById('logContent');
+    contentBox.innerText = "Loading log content...";
+
+    fetch('/admin/logs/view?filename=' + encodeURIComponent(filename))
+        .then(response => {
+            if (!response.ok) throw new Error("Failed to load file");
+            return response.json();
+        })
+        .then(data => {
+            contentBox.innerText = data.content || "(Empty log file)";
+        })
+        .catch(err => {
+            contentBox.innerText = "Error loading log: " + err.message;
+        });
+}
 </script>
 {% endblock %}
-

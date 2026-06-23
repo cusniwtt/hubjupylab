@@ -88,7 +88,7 @@ export async function spawnSession(username: string, port: number, token: string
 
   const jupyterCmd = `cd ${userDir} && exec ${jupyterBin} lab --ip=0.0.0.0 --port=${port} --IdentityProvider.token=${token} --no-browser --notebook-dir=${userDir}`;
 
-  const proc = Bun.spawn(["tmux", "new-session", "-d", "-s", sessionName, jupyterCmd], {
+  const proc = Bun.spawn(["systemd-run", "--user", "--scope", "tmux", "new-session", "-d", "-s", sessionName, jupyterCmd], {
     stdout: "ignore",
     stderr: "pipe",
   });

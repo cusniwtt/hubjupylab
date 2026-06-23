@@ -30,40 +30,37 @@ async function runTest() {
   }
   console.log("Admin seeded successfully");
 
-  // Cleanup user "wayu" if leftover
-  deleteUser("wayu");
-  await stopSession("wayu");
-  cleanupUserFiles("wayu");
+  // Cleanup user "test_user" if leftover
+  deleteUser("test_user");
+  await stopSession("test_user");
+  cleanupUserFiles("test_user");
 
   // 2. Create User
-  console.log("\n[2] Creating user 'wayu'...");
-  const port = getNextPort();
-  if (port !== 8081) {
-    throw new Error(`First port should be 8081, got ${port}`);
-  }
+  console.log("\n[2] Creating user 'test_user'...");
+  const port = 8090;
 
-  const created = await createUser("wayu", "test123pass", "user", port);
+  const created = await createUser("test_user", "test123pass", "user", port);
   if (!created) {
     throw new Error("Failed to create user in DB");
   }
 
-  const user = getUserByUsername("wayu");
+  const user = getUserByUsername("test_user");
   if (!user) {
     throw new Error("User not found in DB after creation");
   }
-  if (user.port !== 8081) {
-    throw new Error(`Incorrect port: ${user.port}`);
+  if (user.port !== port) {
+    throw new Error(`Incorrect port: expected ${port}, got ${user.port}`);
   }
-  console.log(`User 'wayu' created in DB with port ${port}`);
+  console.log(`User 'test_user' created in DB with port ${port}`);
 
   // 3. Setup user environment (venv + install jupyterlab)
   console.log("\n[3] Setting up user venv (this will install JupyterLab using uv)...");
-  const success = await setupUserEnv("wayu");
+  const success = await setupUserEnv("test_user");
   if (!success) {
     throw new Error("Failed to setup user environment");
   }
 
-  const userDir = getUserDir("wayu");
+  const userDir = getUserDir("test_user");
   const venvDir = join(userDir, ".venv");
   if (!existsSync(venvDir)) {
     throw new Error("Venv dir does not exist!");
@@ -74,11 +71,11 @@ async function runTest() {
   console.log("User environment set up successfully with uv & python");
 
   // 4. Spawn JupyterLab session via tmux
-  console.log("\n[4] Spawning tmux session for 'wayu'...");
+  console.log("\n[4] Spawning tmux session for 'test_user'...");
   const token = "testtoken12345";
-  updateToken("wayu", token);
+  updateToken("test_user", token);
 
-  const spawned = await spawnSession("wayu", port, token);
+  const spawned = await spawnSession("test_user", port, token);
   if (!spawned) {
     throw new Error("Failed to spawn tmux session");
   }
@@ -86,31 +83,31 @@ async function runTest() {
   // Wait a moment for tmux session to register
   await sleep(2000);
 
-  if (!(await isSessionRunning("wayu"))) {
+  if (!(await isSessionRunning("test_user"))) {
     throw new Error("tmux session is not running!");
   }
   console.log("tmux session spawned and running successfully");
 
   // 5. Stop session
-  console.log("\n[5] Stopping tmux session for 'wayu'...");
-  const stopped = await stopSession("wayu");
+  console.log("\n[5] Stopping tmux session for 'test_user'...");
+  const stopped = await stopSession("test_user");
   if (!stopped) {
     throw new Error("Failed to stop tmux session");
   }
-  if (await isSessionRunning("wayu")) {
+  if (await isSessionRunning("test_user")) {
     throw new Error("tmux session should be stopped!");
   }
-  updateToken("wayu", null);
+  updateToken("test_user", null);
   console.log("tmux session stopped successfully");
 
   // 6. Cleanup user files
-  console.log("\n[6] Deleting user 'wayu' files...");
-  cleanupUserFiles("wayu");
+  console.log("\n[6] Deleting user 'test_user' files...");
+  cleanupUserFiles("test_user");
   if (existsSync(userDir)) {
     throw new Error("User folder still exists!");
   }
-  deleteUser("wayu");
-  if (getUserByUsername("wayu") !== null) {
+  deleteUser("test_user");
+  if (getUserByUsername("test_user") !== null) {
     throw new Error("User still exists in DB!");
   }
   console.log("Cleanup successful");

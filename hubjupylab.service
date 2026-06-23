@@ -9,6 +9,7 @@ ExecStart=/home/hubjupylab/.bun/bin/bun run src/index.ts
 Restart=always
 RestartSec=5
 Environment=PATH=/home/hubjupylab/.bun/bin:/home/hubjupylab/.local/bin:/usr/bin:/usr/local/bin
+Environment=XDG_RUNTIME_DIR=/run/user/1003
 
 [Install]
 WantedBy=multi-user.target

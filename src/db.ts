@@ -65,11 +65,11 @@ export async function initDb(): Promise<void> {
       ssh_host TEXT NOT NULL DEFAULT '',
       ssh_port INTEGER NOT NULL DEFAULT 22,
       ssh_user TEXT NOT NULL DEFAULT 'root',
-      ssh_key_path TEXT NOT NULL DEFAULT '',
+      ssh_key_path TEXT NOT NULL DEFAULT '/home/hubjupylab/.ssh/id_ed25519',
       remote_base_dir TEXT NOT NULL DEFAULT '/workspace'
     )
   `);
-  db.exec("INSERT OR IGNORE INTO gpu_config (id) VALUES (1)");
+  db.exec("INSERT OR IGNORE INTO gpu_config (id, ssh_user, ssh_key_path, remote_base_dir) VALUES (1, 'root', '/home/hubjupylab/.ssh/id_ed25519', '/workspace')");
 
   // Seed admin if none exists
   const adminRow = db.query("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1").get();

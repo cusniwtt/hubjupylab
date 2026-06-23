@@ -316,8 +316,48 @@ const app = new Elysia()
     const user = getCurrentUser(cookie);
     if (!user || user.role !== "admin") return redirect("/", 302);
     const enriched = await getEnrichedUsers(request);
+    const gpuConfig = db.getGpuConfig();
+
+    const gpuLogsDir = join(config.BASE_DIR, ".gpu_logs");
+    const rsyncLogsDir = join(config.BASE_DIR, ".rsync_logs");
+    const logs: any[] = [];
+
+    if (existsSync(gpuLogsDir)) {
+      const files = readdirSync(gpuLogsDir);
+      for (const f of files) {
+        if (f.endsWith(".log")) {
+          const fullPath = join(gpuLogsDir, f);
+          const stat = statSync(fullPath);
+          logs.push({
+            name: f,
+            type: "gpu-init",
+            size: stat.size,
+            mtime: stat.mtimeMs / 1000
+          });
+        }
+      }
+    }
+
+    if (existsSync(rsyncLogsDir)) {
+      const files = readdirSync(rsyncLogsDir);
+      for (const f of files) {
+        if (f.endsWith(".log")) {
+          const fullPath = join(rsyncLogsDir, f);
+          const stat = statSync(fullPath);
+          logs.push({
+            name: f,
+            type: f.includes("rsync-to") ? "rsync-to" : "rsync-from",
+            size: stat.size,
+            mtime: stat.mtimeMs / 1000
+          });
+        }
+      }
+    }
+
+    logs.sort((a, b) => b.mtime - a.mtime);
+
     return new Response(render("admin.html", {
-      user, users: enriched, error: query.error ?? null, success: query.success ?? null
+      user, users: enriched, error: query.error ?? null, success: query.success ?? null, gpu_config: gpuConfig, logs
     }), { headers: { "Content-Type": "text/html" } });
   })
 
@@ -671,7 +711,8 @@ const app = new Elysia()
       gpuConf.ssh_key_path,
       gpuConf.ssh_user,
       token,
-      user.gpu_endpoint ?? ""
+      user.gpu_endpoint ?? "",
+      gpuConf.remote_base_dir
     );
 
     return new Response(toUint8ArrayStream(stringStream), { headers: sseHeaders });
@@ -728,6 +769,54 @@ const app = new Elysia()
     return redirect(`/admin?success=GPU+status+reset+for+${username}`, 303);
   })
 
+  .get("/admin/gpu/config", ({ cookie }) => {
+    const admin = getCurrentUser(cookie);
+    if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
+    return Response.json(db.getGpuConfig());
+  })
+
+  .post("/admin/gpu/config", async ({ body, cookie, headers }) => {
+    const admin = getCurrentUser(cookie);
+    if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
+
+    const { ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir } = body as Record<string, any>;
+    const host = (ssh_host ?? "").trim();
+    const port = ssh_port ? parseInt(ssh_port, 10) : 22;
+    const user = (ssh_user ?? "root").trim();
+    const keyPath = (ssh_key_path ?? "").trim();
+    const rBaseDir = (remote_base_dir ?? "/workspace").trim();
+
+    const isHtmx = headers["hx-request"] === "true";
+
+    // Validate SSH key path exists
+    if (!keyPath || !existsSync(keyPath)) {
+      if (isHtmx) {
+        return new Response("", {
+          status: 422,
+          headers: {
+            "HX-Trigger": JSON.stringify({
+              showToast: { message: `SSH Key file not found on disk: ${keyPath}`, type: "error" }
+            })
+          }
+        });
+      }
+      return new Response(`SSH Key file not found: ${keyPath}`, { status: 400 });
+    }
+
+    db.saveGpuConfig(host, port, user, keyPath, rBaseDir);
+
+    if (isHtmx) {
+      return new Response("", {
+        headers: {
+          "HX-Trigger": JSON.stringify({
+            showToast: { message: "Global GPU configuration saved successfully", type: "success" }
+          })
+        }
+      });
+    }
+    return new Response("Config saved");
+  })
+
   .get("/admin/gpu/last-log/:username", ({ params, cookie }) => {
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
@@ -739,49 +828,7 @@ const app = new Elysia()
   .get("/admin/logs", ({ cookie, redirect }) => {
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
-
-    const gpuLogsDir = join(config.BASE_DIR, ".gpu_logs");
-    const rsyncLogsDir = join(config.BASE_DIR, ".rsync_logs");
-
-    const logs: any[] = [];
-
-    if (existsSync(gpuLogsDir)) {
-      const files = readdirSync(gpuLogsDir);
-      for (const f of files) {
-        if (f.endsWith(".log")) {
-          const fullPath = join(gpuLogsDir, f);
-          const stat = statSync(fullPath);
-          logs.push({
-            name: f,
-            type: "gpu-init",
-            size: stat.size,
-            mtime: stat.mtimeMs / 1000
-          });
-        }
-      }
-    }
-
-    if (existsSync(rsyncLogsDir)) {
-      const files = readdirSync(rsyncLogsDir);
-      for (const f of files) {
-        if (f.endsWith(".log")) {
-          const fullPath = join(rsyncLogsDir, f);
-          const stat = statSync(fullPath);
-          logs.push({
-            name: f,
-            type: f.includes("rsync-to") ? "rsync-to" : "rsync-from",
-            size: stat.size,
-            mtime: stat.mtimeMs / 1000
-          });
-        }
-      }
-    }
-
-    logs.sort((a, b) => b.mtime - a.mtime);
-
-    return new Response(render("logs.html", { user: admin, logs }), {
-      headers: { "Content-Type": "text/html" }
-    });
+    return redirect("/admin?tab=logs", 302);
   })
 
   .get("/admin/logs/view", ({ query, cookie }) => {

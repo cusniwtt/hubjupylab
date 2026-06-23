@@ -337,54 +337,55 @@ function runSync(endpoint, actionName, alpineComponent) {
     
     syncEventSource = new EventSource(endpoint);
     
-    syncEventSource.onmessage = function(event) {
-        const line = event.data.trim();
-        if (!line) return;
-        
-        // Match percentage, speed, and ETA in rsync output
-        const progressMatch = line.match(/\s+\d+(?:,\d+)*\s+(\d+)%\s+([^\s]+\/s)?\s*(\d+:\d+:\d+)?/);
-        if (progressMatch) {
-            const percent = progressMatch[1];
-            const speed = progressMatch[2] || "";
-            const eta = progressMatch[3] || "";
-            
+    syncEventSource.addEventListener('progress', function(event) {
+        try {
+            const data = JSON.parse(event.data);
             progContainer.style.display = "flex";
-            document.getElementById("sync_progress_fill").style.width = `${percent}%`;
-            document.getElementById("sync_progress_percent").innerText = `${percent}%`;
-            if (speed) {
-                document.getElementById("sync_progress_speed").innerText = speed;
+            document.getElementById("sync_progress_fill").style.width = `${data.percent}%`;
+            document.getElementById("sync_progress_percent").innerText = `${data.percent}%`;
+            if (data.speed) {
+                document.getElementById("sync_progress_speed").innerText = data.speed;
             }
-            if (eta) {
-                document.getElementById("sync_progress_eta").innerText = eta;
+            if (data.eta) {
+                document.getElementById("sync_progress_eta").innerText = data.eta;
             }
             if (currentFileName) {
                 document.getElementById("sync_progress_file").innerText = currentFileName;
             }
-        } else {
-            // Check if it is a filename and not a summary/status line
-            const isSummary = line.includes("sending incremental file list") || 
-                              line.includes("receiving incremental file list") ||
-                              line.includes("sent ") || 
-                              line.includes("total size is") || 
-                              line.includes("Starting rsync") ||
-                              line.includes("Sync complete") ||
-                              line.includes("Sync back complete") ||
-                              line.includes("failed") ||
-                              line.includes("Error:") ||
-                              line.startsWith("receiving incremental file list");
-                              
-            if (!isSummary && line.length > 0) {
-                currentFileName = line;
-                document.getElementById("sync_progress_file").innerText = currentFileName;
-            }
-            
-            consoleBox.innerText += event.data + "\n";
-            consoleBox.scrollTop = consoleBox.scrollHeight;
+        } catch (e) {}
+    });
+
+    syncEventSource.onmessage = function(event) {
+        const line = event.data.trim();
+        if (!line) return;
+        
+        // Check if it is a filename and not a summary/status line
+        const isSummary = line.includes("sending incremental file list") || 
+                          line.includes("receiving incremental file list") ||
+                          line.includes("sent ") || 
+                          line.includes("total size is") || 
+                          line.includes("Starting rsync") ||
+                          line.includes("Sync complete") ||
+                          line.includes("Sync back complete") ||
+                          line.includes("failed") ||
+                          line.includes("Error:") ||
+                          line.startsWith("receiving incremental file list");
+                          
+        if (!isSummary && line.length > 0) {
+            currentFileName = line;
+            document.getElementById("sync_progress_file").innerText = currentFileName;
         }
+        
+        consoleBox.innerText += event.data + "\n";
+        consoleBox.scrollTop = consoleBox.scrollHeight;
         
         if (event.data.includes("SUCCESS") || event.data.includes("failed") || event.data.includes("Error:")) {
             syncEventSource.close();
             alpineComponent.syncing = false;
+            // hide progress container after a small delay
+            setTimeout(() => {
+                progContainer.style.display = "none";
+            }, 3000);
         }
     };
     
