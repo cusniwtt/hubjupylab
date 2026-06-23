@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { BASE_DIR, PYTHON_VERSION, JUPYTERLAB_VERSION, JUPYTER_PORT_START, JUPYTER_PORT_END } from "./config";
+import { BASE_DIR, PYTHON_VERSION, JUPYTERLAB_VERSION, JUPYTER_PORT_START, JUPYTER_PORT_END, CODE_SERVER_PORT_OFFSET } from "./config";
 import { listUsers, updateToken, getUsedPorts } from "./db";
 
 export function validateUsername(username: string): void {
@@ -85,10 +85,13 @@ export async function spawnSession(username: string, port: number, token: string
   const sessionName = getSessionName(username);
   const userDir = getUserDir(username);
   const jupyterBin = join(userDir, ".venv", "bin", "jupyter");
+  const codeServerPort = port + CODE_SERVER_PORT_OFFSET;
 
   const jupyterCmd = `cd ${userDir} && exec ${jupyterBin} lab --ip=0.0.0.0 --port=${port} --IdentityProvider.token=${token} --no-browser --notebook-dir=${userDir}`;
+  const codeServerCmd = `PASSWORD=${token} exec code-server --bind-addr=0.0.0.0:${codeServerPort} --auth=password --disable-telemetry ${userDir}`;
 
-  const proc = Bun.spawn(["systemd-run", "--user", "--scope", "tmux", "new-session", "-d", "-s", sessionName, jupyterCmd], {
+  // Start tmux with jupyter window named 'jupyter'
+  const proc = Bun.spawn(["systemd-run", "--user", "--scope", "tmux", "new-session", "-d", "-s", sessionName, "-n", "jupyter", jupyterCmd], {
     stdout: "ignore",
     stderr: "pipe",
   });
@@ -98,6 +101,19 @@ export async function spawnSession(username: string, port: number, token: string
     console.error(`Error spawning tmux session for ${username}: ${stderrText}`);
     return false;
   }
+
+  // Create new window for code-server
+  const winProc = Bun.spawn(["tmux", "new-window", "-t", `${sessionName}:1`, "-n", "code-server", codeServerCmd], {
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const winStderr = await new Response(winProc.stderr).text();
+  const winExit = await winProc.exited;
+  if (winExit !== 0) {
+    console.error(`Error spawning code-server window for ${username}: ${winStderr}`);
+    return false;
+  }
+
   return true;
 }
 

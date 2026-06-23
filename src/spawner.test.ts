@@ -5,16 +5,18 @@ import { BASE_DIR } from "./config";
 const TEST_DB = join(BASE_DIR, "hubjupylab_spawner_test.db");
 process.env.DB_PATH = TEST_DB;
 
+// Delete the DB file before requiring the db module to avoid unlinking an open file
+if (existsSync(TEST_DB)) {
+  try {
+    unlinkSync(TEST_DB);
+  } catch (_) {}
+}
+
 const { initDb, createUser, deleteUser } = require("./db");
 const { getNextPort, getUserDir, cleanupUserFiles, spawnSession, validateUsername } = require("./spawner");
 
 describe("Spawner Module", () => {
   beforeAll(async () => {
-    if (existsSync(TEST_DB)) {
-      try {
-        unlinkSync(TEST_DB);
-      } catch (_) {}
-    }
     await initDb();
   });
 
