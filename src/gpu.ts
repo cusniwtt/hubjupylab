@@ -1,7 +1,68 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { BASE_DIR, SSH_KEY_PATH, SSH_USER, REMOTE_BASE_DIR, PYTHON_VERSION, JUPYTERLAB_VERSION } from "./config";
-import { getUserByUsername, updateGpuInitStatus } from "./db";
+import { BASE_DIR, PYTHON_VERSION, JUPYTERLAB_VERSION } from "./config";
+import { getUserByUsername, updateGpuInitStatus, getGpuConfig } from "./db";
+
+export const SYNC_EXCLUDES = [
+  "*venv*",
+  "__pycache__",
+  ".ipynb_checkpoints",
+  "hf_cache",
+  ".cache",
+  ".conda",
+  ".local",
+  "nohup.out"
+];
+
+async function remoteDirExists(
+  sshPort: number,
+  sshKeyPath: string,
+  sshUser: string,
+  sshHost: string,
+  path: string
+): Promise<boolean> {
+  try {
+    const proc = Bun.spawn([
+      "ssh", "-p", String(sshPort), "-i", sshKeyPath,
+      "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
+      `[ -d "${path}" ]`
+    ]);
+    const exitCode = await proc.exited;
+    return exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function getLocalFileCount(path: string): Promise<number> {
+  try {
+    const proc = Bun.spawn(["bash", "-c", `find "${path}" | wc -l`], { stdout: "pipe", stderr: "pipe" });
+    const stdout = await new Response(proc.stdout).text();
+    return parseInt(stdout.trim(), 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function getRemoteFileCount(
+  sshPort: number,
+  sshKeyPath: string,
+  sshUser: string,
+  sshHost: string,
+  path: string
+): Promise<number> {
+  try {
+    const proc = Bun.spawn([
+      "ssh", "-p", String(sshPort), "-i", sshKeyPath,
+      "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
+      `find "${path}" | wc -l`
+    ], { stdout: "pipe", stderr: "pipe" });
+    const stdout = await new Response(proc.stdout).text();
+    return parseInt(stdout.trim(), 10) || 0;
+  } catch {
+    return 0;
+  }
+}
 
 function timestamp(): string {
   const d = new Date();
@@ -28,7 +89,7 @@ async function readStream(
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split(/\r?\n/);
+      const lines = buffer.split(/\r?\n|\r/);
       buffer = lines.pop() ?? "";
       for (const l of lines) {
         onLine(l);
@@ -42,16 +103,80 @@ async function readStream(
   }
 }
 
-export async function testGpuSsh(sshHost: string, sshPort: number = 22): Promise<[boolean, string]> {
-  if (!sshHost || !existsSync(SSH_KEY_PATH)) {
+function parseSizeToBytes(value: number, unit: string): number {
+  const u = unit.toLowerCase();
+  if (u.startsWith("k")) return value * 1024;
+  if (u.startsWith("m")) return value * 1024 * 1024;
+  if (u.startsWith("g")) return value * 1024 * 1024 * 1024;
+  if (u.startsWith("t")) return value * 1024 * 1024 * 1024 * 1024;
+  return value;
+}
+
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec === 0) return "";
+  if (bytesPerSec < 1024) return `${bytesPerSec.toFixed(0)} B/s`;
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
+function formatEta(seconds: number): string {
+  if (seconds < 0 || !isFinite(seconds)) return "--:--:--";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+async function getLocalDirSize(path: string): Promise<number> {
+  try {
+    const proc = Bun.spawn(["du", "-sb", path], { stdout: "pipe", stderr: "pipe" });
+    const stdout = await new Response(proc.stdout).text();
+    const match = stdout.trim().match(/^(\d+)/);
+    return match ? parseInt(match[1], 10) : 1;
+  } catch (e) {
+    console.error(`Error getting size for local dir ${path}:`, e);
+    return 1;
+  }
+}
+
+async function getRemoteDirSize(
+  sshPort: number,
+  sshKeyPath: string,
+  sshUser: string,
+  sshHost: string,
+  path: string
+): Promise<number> {
+  try {
+    const proc = Bun.spawn([
+      "ssh", "-p", String(sshPort), "-i", sshKeyPath,
+      "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
+      `du -sb ${path}`
+    ], { stdout: "pipe", stderr: "pipe" });
+    const stdout = await new Response(proc.stdout).text();
+    const match = stdout.trim().match(/^(\d+)/);
+    return match ? parseInt(match[1], 10) : 1;
+  } catch (e) {
+    console.error(`Error getting size for remote dir ${path}:`, e);
+    return 1;
+  }
+}
+
+export async function testGpuSsh(
+  sshHost: string,
+  sshPort: number = 22,
+  keyPath: string,
+  sshUser: string
+): Promise<[boolean, string]> {
+  if (!sshHost || !keyPath || !existsSync(keyPath)) {
     return [false, "GPU SSH not configured or key not found"];
   }
   const proc = Bun.spawn([
     "ssh", "-p", String(sshPort),
-    "-i", SSH_KEY_PATH,
+    "-i", keyPath,
     "-o", "StrictHostKeyChecking=no",
     "-o", "ConnectTimeout=10",
-    `${SSH_USER}@${sshHost}`, "echo ok"
+    `${sshUser}@${sshHost}`, "echo ok"
   ], { stdout: "pipe", stderr: "pipe" });
 
   const timer = setTimeout(() => {
@@ -80,16 +205,17 @@ export async function stopGpuSession(username: string): Promise<[boolean, string
 
   const sshHost = user.gpu_ssh_host;
   const sshPort = user.gpu_ssh_port ?? 22;
-  if (!sshHost || !existsSync(SSH_KEY_PATH)) {
+  const gpuConf = getGpuConfig();
+  if (!sshHost || !gpuConf.ssh_key_path || !existsSync(gpuConf.ssh_key_path)) {
     return [false, "GPU SSH not configured for user"];
   }
 
   try {
     const proc = Bun.spawn([
       "ssh", "-p", String(sshPort),
-      "-i", SSH_KEY_PATH,
+      "-i", gpuConf.ssh_key_path,
       "-o", "StrictHostKeyChecking=no",
-      `${SSH_USER}@${sshHost}`,
+      `${gpuConf.ssh_user}@${sshHost}`,
       `tmux kill-session -t gpu_${username}`
     ], { stdout: "pipe", stderr: "pipe" });
 
@@ -124,7 +250,8 @@ export function isValidGpuEndpoint(endpoint: string): boolean {
 
 export function gpuInitStream(
   username: string, host: string, port: number,
-  keyPath: string, sshUser: string, token: string, endpoint: string
+  keyPath: string, sshUser: string, token: string, endpoint: string,
+  remoteBaseDir: string
 ): ReadableStream<string> {
   const logDir = join(BASE_DIR, ".gpu_logs");
   mkdirSync(logDir, { recursive: true });
@@ -151,7 +278,7 @@ export function gpuInitStream(
         updateGpuInitStatus(username, "running");
         emit("Starting GPU initialization...");
 
-        const [ok, sshMsg] = await testGpuSsh(host, port);
+        const [ok, sshMsg] = await testGpuSsh(host, port, keyPath, sshUser);
         if (!ok) {
           emit(`SSH connection test failed: ${sshMsg}`);
           updateGpuInitStatus(username, "failed");
@@ -187,14 +314,14 @@ export function gpuInitStream(
         };
 
         await runStep("apt-update", "apt-get update -y");
-        await runStep("apt-install", "apt-get install -y tmux vim btop rsync");
+        await runStep("apt-install", "apt-get install -y tmux vim btop rsync zstd");
         await runStep("install-uv", "curl -LsSf https://astral.sh/uv/install.sh | sh");
-        await runStep("mkdir-workspace", `mkdir -p ${REMOTE_BASE_DIR}/${username}`);
-        await runStep("create-venv", `$HOME/.local/bin/uv venv --clear --python ${PYTHON_VERSION} ${REMOTE_BASE_DIR}/${username}/.venv`);
-        await runStep("install-jupyter", `$HOME/.local/bin/uv pip install jupyterlab==${JUPYTERLAB_VERSION} --python ${REMOTE_BASE_DIR}/${username}/.venv/bin/python`);
+        await runStep("mkdir-workspace", `mkdir -p ${remoteBaseDir}/${username}`);
+        await runStep("create-venv", `$HOME/.local/bin/uv venv --clear --python ${PYTHON_VERSION} ${remoteBaseDir}/${username}/.venv`);
+        await runStep("install-jupyter", `$HOME/.local/bin/uv pip install jupyterlab==${JUPYTERLAB_VERSION} --python ${remoteBaseDir}/${username}/.venv/bin/python`);
         await runStep("kill-existing-tmux", `tmux kill-session -t gpu_${username} 2>/dev/null || true`);
 
-        const jupyterCmd = `cd ${REMOTE_BASE_DIR}/${username} && exec ${REMOTE_BASE_DIR}/${username}/.venv/bin/jupyter lab --no-browser --port=8888 --ServerApp.allow_origin='${endpoint}' --ip=0.0.0.0 --allow-root --IdentityProvider.token=${token} --notebook-dir=${REMOTE_BASE_DIR}/${username}`;
+        const jupyterCmd = `cd ${remoteBaseDir}/${username} && exec ${remoteBaseDir}/${username}/.venv/bin/jupyter lab --no-browser --port=8888 --ServerApp.allow_origin='${endpoint}' --ip=0.0.0.0 --allow-root --IdentityProvider.token=${token} --notebook-dir=${remoteBaseDir}/${username}`;
         await runStep("spawn-jupyter", `tmux new-session -d -s gpu_${username} "${jupyterCmd}"`);
         await runStep("verify-tmux", `tmux has-session -t gpu_${username}`);
 
@@ -239,11 +366,49 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
     async start(controller) {
       const logWriter = Bun.file(logPath).writer();
 
+      let isClosed = false;
+
       function emit(msg: string): void {
+        if (isClosed) return;
         const ts = timestamp();
         logWriter.write(`[${ts}] ${msg}\n`);
         logWriter.flush();
-        controller.enqueue(`data: ${msg}\n\n`);
+        try {
+          controller.enqueue(`data: ${msg}\n\n`);
+        } catch (_) {}
+      }
+
+      function emitProgress(percent: number, speed: string, eta: string): void {
+        if (isClosed) return;
+        try {
+          controller.enqueue(`event: progress\ndata: ${JSON.stringify({ percent, speed, eta })}\n\n`);
+        } catch (_) {}
+      }
+
+      async function runCmd(cmd: string[], keepAliveMsg?: string): Promise<number> {
+        const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+        activeProc = proc;
+
+        let timer: any = null;
+        if (keepAliveMsg) {
+          timer = setInterval(() => {
+            emit(`${keepAliveMsg} (please wait)...`);
+          }, 3000);
+        }
+
+        try {
+          const stdoutPromise = readStream(proc.stdout, (line) => {
+            if (line.trim()) emit(line);
+          });
+          const stderrPromise = readStream(proc.stderr, (line) => {
+            if (line.trim()) emit(`Error: ${line}`);
+          });
+          await Promise.all([stdoutPromise, stderrPromise]);
+          return await proc.exited;
+        } finally {
+          if (timer) clearInterval(timer);
+          activeProc = null;
+        }
       }
 
       try {
@@ -260,7 +425,9 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
 
         const sshHost = user.gpu_ssh_host;
         const sshPort = user.gpu_ssh_port ?? 22;
-        if (!sshHost || !existsSync(SSH_KEY_PATH)) {
+        const gpuConf = getGpuConfig();
+
+        if (!sshHost || !gpuConf.ssh_key_path || !existsSync(gpuConf.ssh_key_path)) {
           emit("Error: GPU SSH not configured");
           return;
         }
@@ -290,14 +457,14 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
         }
 
         const localPath = targetDir + "/";
-        const remotePath = `${SSH_USER}@${sshHost}:${REMOTE_BASE_DIR}/${username}/${syncSub}/`;
+        const remotePath = `${gpuConf.ssh_user}@${sshHost}:${gpuConf.remote_base_dir}/${username}/${syncSub}/`;
 
         // Pre-create remote directory for "to" direction
         if (direction === "to") {
           const mkdirProc = Bun.spawn([
-            "ssh", "-p", String(sshPort), "-i", SSH_KEY_PATH,
-            "-o", "StrictHostKeyChecking=no", `${SSH_USER}@${sshHost}`,
-            `mkdir -p ${REMOTE_BASE_DIR}/${username}/${syncSub}/`
+            "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
+            "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+            `mkdir -p ${gpuConf.remote_base_dir}/${username}/${syncSub}/`
           ], { stdout: "pipe", stderr: "pipe" });
 
           activeProc = mkdirProc;
@@ -315,43 +482,245 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
           }
         }
 
-        const src = direction === "to" ? localPath : remotePath;
-        const dst = direction === "to" ? remotePath : localPath;
-
-        const cmd = [
-          "rsync", "-avz", "--delete", "-P",
-          "--exclude", ".venv/", "--exclude", "__pycache__/",
-          "-e", `ssh -p ${sshPort} -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no`,
-          src, dst
-        ];
-
-        emit(`Starting rsync ${direction === "to" ? "to" : "from"} GPU...`);
-
-        const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
-        activeProc = proc;
+        // Calculate total size
+        let totalBytes = 1;
+        emit("Calculating directory size...");
+        const keepAliveTimer = setInterval(() => {
+          emit("Calculating directory size (please wait)...");
+        }, 2000);
 
         try {
-          const stdoutPromise = readStream(proc.stdout, (line) => {
-            if (line.trim()) emit(line);
-          });
-          const stderrPromise = readStream(proc.stderr, (line) => {
-            if (line.trim()) emit(`Error: ${line}`);
-          });
-
-          await Promise.all([stdoutPromise, stderrPromise]);
-          const exitCode = await proc.exited;
-          if (exitCode === 0) {
-            emit(direction === "to" ? "Sync complete SUCCESS" : "Sync back complete SUCCESS");
+          if (direction === "to") {
+            totalBytes = await getLocalDirSize(targetDir);
           } else {
-            emit(`Sync ${direction === "to" ? "" : "back "}failed with exit status ${exitCode}`);
+            const remoteDirToMeasure = `${gpuConf.remote_base_dir}/${username}/${syncSub}`;
+            totalBytes = await getRemoteDirSize(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDirToMeasure);
           }
         } finally {
-          activeProc = null;
+          clearInterval(keepAliveTimer);
+        }
+
+        const TAR_THRESHOLD_BYTES = 50 * 1024 * 1024; // 50 MB
+        const relativePath = subpath ? `${username}/${syncSub}` : username;
+        const remoteDir = `${gpuConf.remote_base_dir}/${username}/${syncSub}`;
+
+        if (totalBytes <= TAR_THRESHOLD_BYTES) {
+          // Direct rsync (original logic)
+          const localPath = targetDir + "/";
+          const remotePath = `${gpuConf.ssh_user}@${sshHost}:${gpuConf.remote_base_dir}/${username}/${syncSub}/`;
+
+          const src = direction === "to" ? localPath : remotePath;
+          const dst = direction === "to" ? remotePath : localPath;
+
+          const cmd = [
+            "rsync", "-az", "--info=progress2",
+            "--exclude", "*venv*", "--exclude", "__pycache__/", "--exclude", ".ipynb_checkpoints/",
+            "-e", `ssh -p ${sshPort} -i ${gpuConf.ssh_key_path} -o StrictHostKeyChecking=no`,
+            src, dst
+          ];
+
+          emit(`Directory size: ${(totalBytes / (1024 * 1024)).toFixed(1)} MB (under threshold). Starting direct rsync...`);
+
+          const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+          activeProc = proc;
+
+          try {
+            const stdoutPromise = readStream(proc.stdout, (line) => {
+              const trimmed = line.trim();
+              if (!trimmed) return;
+              const progressMatch = trimmed.match(/\s+\d+(?:,\d+)*\s+(\d+)%\s+([^\s]+\/s)?\s*(\d+:\d+:\d+)?/);
+              if (progressMatch) {
+                const percent = parseInt(progressMatch[1], 10);
+                const speed = progressMatch[2] || "";
+                const eta = progressMatch[3] || "";
+                emitProgress(percent, speed, eta);
+              } else {
+                emit(line);
+              }
+            });
+            const stderrPromise = readStream(proc.stderr, (line) => {
+              if (line.trim()) emit(`Error: ${line}`);
+            });
+
+            await Promise.all([stdoutPromise, stderrPromise]);
+            const exitCode = await proc.exited;
+            if (exitCode === 0) {
+              emit(direction === "to" ? "Sync complete SUCCESS" : "Sync back complete SUCCESS");
+            } else {
+              emit(`Sync ${direction === "to" ? "" : "back "}failed with exit status ${exitCode}`);
+            }
+          } finally {
+            activeProc = null;
+          }
+        } else {
+          // Large directory sync using Tar + Zstd + Rsync + Unpack
+          emit(`Directory size: ${(totalBytes / (1024 * 1024)).toFixed(1)} MB (exceeds ${(TAR_THRESHOLD_BYTES / (1024 * 1024)).toFixed(0)} MB threshold). Using Tar-Zstd-Rsync...`);
+
+          const localTempArchive = join(BASE_DIR, `.${username}_sync.tar.zst`);
+          const remoteTempArchive = `${gpuConf.remote_base_dir}/.${username}_sync.tar.zst`;
+
+          if (direction === "to") {
+            // 1. Compress locally
+            emit("Compressing files locally using zstd...");
+            const compressCmd = [
+              "tar", "--exclude=*venv*", "--exclude=__pycache__", "--exclude=.ipynb_checkpoints",
+              "-I", "zstd -T0", "-cf", localTempArchive, "-C", BASE_DIR, relativePath
+            ];
+            const compressExit = await runCmd(compressCmd, "Compressing files locally");
+            if (compressExit !== 0) {
+              emit(`Local compression failed with exit status ${compressExit}`);
+              return;
+            }
+
+            // 2. Transfer via Rsync
+            emit("Transferring compressed archive to GPU...");
+            const transferCmd = [
+              "rsync", "-a", "--info=progress2",
+              "-e", `ssh -p ${sshPort} -i ${gpuConf.ssh_key_path} -o StrictHostKeyChecking=no`,
+              localTempArchive, `${gpuConf.ssh_user}@${sshHost}:${remoteTempArchive}`
+            ];
+
+            const proc = Bun.spawn(transferCmd, { stdout: "pipe", stderr: "pipe" });
+            activeProc = proc;
+            try {
+              const stdoutPromise = readStream(proc.stdout, (line) => {
+                const trimmed = line.trim();
+                if (!trimmed) return;
+                const progressMatch = trimmed.match(/\s+\d+(?:,\d+)*\s+(\d+)%\s+([^\s]+\/s)?\s*(\d+:\d+:\d+)?/);
+                if (progressMatch) {
+                  const percent = parseInt(progressMatch[1], 10);
+                  const speed = progressMatch[2] || "";
+                  const eta = progressMatch[3] || "";
+                  emitProgress(percent, speed, eta);
+                } else {
+                  emit(line);
+                }
+              });
+              const stderrPromise = readStream(proc.stderr, (line) => {
+                if (line.trim()) emit(`Error: ${line}`);
+              });
+              await Promise.all([stdoutPromise, stderrPromise]);
+              const transferExit = await proc.exited;
+              if (transferExit !== 0) {
+                emit(`Archive transfer failed with exit status ${transferExit}`);
+                try { unlinkSync(localTempArchive); } catch (_) {}
+                return;
+              }
+            } finally {
+              activeProc = null;
+            }
+
+            // 3. Extract remotely
+            emit("Extracting files on GPU VM...");
+            const extractCmd = [
+              "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
+              "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+              `mkdir -p ${remoteDir} && zstd -d -T0 -c ${remoteTempArchive} | tar -xf - -C ${gpuConf.remote_base_dir} && rm -f ${remoteTempArchive}`
+            ];
+            const extractExit = await runCmd(extractCmd, "Extracting files remotely");
+            if (extractExit !== 0) {
+              emit(`Remote extraction failed with exit status ${extractExit}`);
+            } else {
+              emitProgress(100, "", "00:00:00");
+              emit("Sync complete SUCCESS");
+            }
+
+            // 4. Cleanup local temp archive
+            try { unlinkSync(localTempArchive); } catch (_) {}
+
+          } else {
+            // "from" direction (download)
+            // 1. Compress remotely
+            emit("Compressing files on GPU VM using zstd...");
+            const remoteCompressCmd = [
+              "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
+              "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+              `tar --exclude="*venv*" --exclude="__pycache__" --exclude=".ipynb_checkpoints" -I "zstd -T0" -cf ${remoteTempArchive} -C ${gpuConf.remote_base_dir} ${relativePath}`
+            ];
+            const compressExit = await runCmd(remoteCompressCmd, "Compressing files remotely");
+            if (compressExit !== 0) {
+              emit(`Remote compression failed with exit status ${compressExit}`);
+              return;
+            }
+
+            // 2. Transfer via Rsync
+            emit("Transferring compressed archive to local...");
+            const transferCmd = [
+              "rsync", "-a", "--info=progress2",
+              "-e", `ssh -p ${sshPort} -i ${gpuConf.ssh_key_path} -o StrictHostKeyChecking=no`,
+              `${gpuConf.ssh_user}@${sshHost}:${remoteTempArchive}`, localTempArchive
+            ];
+
+            const proc = Bun.spawn(transferCmd, { stdout: "pipe", stderr: "pipe" });
+            activeProc = proc;
+            try {
+              const stdoutPromise = readStream(proc.stdout, (line) => {
+                const trimmed = line.trim();
+                if (!trimmed) return;
+                const progressMatch = trimmed.match(/\s+\d+(?:,\d+)*\s+(\d+)%\s+([^\s]+\/s)?\s*(\d+:\d+:\d+)?/);
+                if (progressMatch) {
+                  const percent = parseInt(progressMatch[1], 10);
+                  const speed = progressMatch[2] || "";
+                  const eta = progressMatch[3] || "";
+                  emitProgress(percent, speed, eta);
+                } else {
+                  emit(line);
+                }
+              });
+              const stderrPromise = readStream(proc.stderr, (line) => {
+                if (line.trim()) emit(`Error: ${line}`);
+              });
+              await Promise.all([stdoutPromise, stderrPromise]);
+              const transferExit = await proc.exited;
+              if (transferExit !== 0) {
+                emit(`Archive transfer failed with exit status ${transferExit}`);
+                try {
+                  const cleanupRemoteCmd = [
+                    "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
+                    "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+                    `rm -f ${remoteTempArchive}`
+                  ];
+                  Bun.spawn(cleanupRemoteCmd);
+                } catch (_) {}
+                return;
+              }
+            } finally {
+              activeProc = null;
+            }
+
+            // 3. Extract locally
+            emit("Extracting files locally...");
+            const extractCmd = [
+              "bash", "-c",
+              `zstd -d -T0 -c ${localTempArchive} | tar -xf - -C ${BASE_DIR}`
+            ];
+            const extractExit = await runCmd(extractCmd, "Extracting files locally");
+            if (extractExit !== 0) {
+              emit(`Local extraction failed with exit status ${extractExit}`);
+            } else {
+              emitProgress(100, "", "00:00:00");
+              emit("Sync back complete SUCCESS");
+            }
+
+            // 4. Cleanup both
+            try { unlinkSync(localTempArchive); } catch (_) {}
+            try {
+              const cleanupRemoteCmd = [
+                "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
+                "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+                `rm -f ${remoteTempArchive}`
+              ];
+              Bun.spawn(cleanupRemoteCmd);
+            } catch (_) {}
+          }
         }
       } catch (e: any) {
         emit(`Error: ${e.message}`);
       } finally {
-        controller.close();
+        isClosed = true;
+        try {
+          controller.close();
+        } catch (_) {}
         logWriter.end();
       }
     },

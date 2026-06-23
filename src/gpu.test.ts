@@ -168,4 +168,16 @@ describe("GPU Module", () => {
     expect(SYNC_SIZE_THRESHOLD).toBe(1073741824); // 1 GB
     expect(SYNC_FILE_THRESHOLD).toBe(5000); // 5000 files
   });
+
+  test("SYNC_EXCLUDES contains all required patterns", () => {
+    const { SYNC_EXCLUDES } = require("./gpu");
+    expect(SYNC_EXCLUDES).toContain("*venv*");
+    expect(SYNC_EXCLUDES).toContain("__pycache__");
+    expect(SYNC_EXCLUDES).toContain(".ipynb_checkpoints");
+    expect(SYNC_EXCLUDES).toContain("hf_cache");
+    expect(SYNC_EXCLUDES).toContain(".cache");
+    expect(SYNC_EXCLUDES).toContain(".conda");
+    expect(SYNC_EXCLUDES).toContain(".local");
+    expect(SYNC_EXCLUDES).toContain("nohup.out");
+  });
 });
