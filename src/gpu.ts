@@ -320,10 +320,14 @@ export function gpuInitStream(
         await runStep("mkdir-workspace", `mkdir -p ${remoteBaseDir}/${username}`);
         await runStep("create-venv", `$HOME/.local/bin/uv venv --clear --python ${PYTHON_VERSION} ${remoteBaseDir}/${username}/.venv`);
         await runStep("install-jupyter", `$HOME/.local/bin/uv pip install jupyterlab==${JUPYTERLAB_VERSION} --python ${remoteBaseDir}/${username}/.venv/bin/python`);
+        await runStep("install-code-server", "curl -fsSL https://code-server.dev/install.sh | sh");
         await runStep("kill-existing-tmux", `tmux kill-session -t gpu_${username} 2>/dev/null || true`);
 
         const jupyterCmd = `cd ${remoteBaseDir}/${username} && exec ${remoteBaseDir}/${username}/.venv/bin/jupyter lab --no-browser --port=8888 --ServerApp.allow_origin='${endpoint}' --ip=0.0.0.0 --allow-root --IdentityProvider.token=${token} --notebook-dir=${remoteBaseDir}/${username}`;
-        await runStep("spawn-jupyter", `tmux new-session -d -s gpu_${username} "${jupyterCmd}"`);
+        await runStep("spawn-jupyter", `tmux new-session -d -s gpu_${username} -n jupyter "${jupyterCmd}"`);
+        
+        const codeServerCmd = `PASSWORD=${token} exec code-server --bind-addr=0.0.0.0:8889 --auth=password --disable-telemetry ${remoteBaseDir}/${username}`;
+        await runStep("spawn-code-server", `tmux new-window -t gpu_${username}:1 -n code-server "${codeServerCmd}"`);
         await runStep("verify-tmux", `tmux has-session -t gpu_${username}`);
 
         updateGpuInitStatus(username, "ready");
