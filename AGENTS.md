@@ -53,7 +53,12 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 - **Button Icons**: Embedded SVG brand icons (Jupyter and Code Server logos) within both local and remote GPU VM launcher buttons.
 
 ### 8. Aesthetic Branding & Palette Update
-- **Dark Palette Migration**: Reconfigured site theme with Color Hunt palette: `#000000` (Pure Black background), `#233d4d` (Deep Teal card background/radial-gradients), `#fe7f2d` (Vibrant Orange accent highlights and hover), and `#eaecf0` (Light Gray text, labels, and borders).
+- **Solid Dark Palette**: Configured site theme with solid background (removed radial gradients) and custom Color Hunt palette: `#191919` (Solid dark grey background), `#242424` (Solid card background), `#750e21` (deep burgundy red logo segment), `#e3651d` (primary accent orange highlights, hover, active tabs, and logo segment), and `#bed754` (success color, alerts, and logo segment).
+
+### 9. Password Management & Security
+- **Admin Password Reset**: Admins can reset user passwords. Generating a secure random 12-char OTP and displaying it on a centered Alpine.js window modal with copy options.
+- **Forced Password Changes**: Resets flag `must_change_password` in DB. Users are forced to change their passwords before accessing any dashboard or session control endpoints.
+- **User Password Updates**: Users can voluntarily change passwords at any time via a Change Password dashboard link.
 
 ---
 
@@ -61,13 +66,15 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 
 - **WSL Local Development**: Configured to bind on `127.0.0.1` inside WSL environment to support local Windows browser access.
 - **Starlette TemplateResponse**: Position-independent keyword call style (`request=request, name=name, context=context`) prevents signature exceptions.
+- **Nunjucks Development Caching**: Set `noCache: true` on Nunjucks configuration to enable immediate template updates without server restarts.
 
 ## Verification
-Scripts available in [/scratch](file:///home/hubjupylab/hubjupylab/scratch):
-- [verify_hub.py](file:///home/hubjupylab/hubjupylab/scratch/verify_hub.py): Standard verification of spawner, db, and user flows.
-- [verify_admin_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_admin_controls.py): Verification of admin routes.
-- [verify_gpu.py](file:///home/hubjupylab/hubjupylab/scratch/verify_gpu.py): Verification of GPU config assignment and rsync failures.
-- [verify_htmx_user_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_htmx_user_controls.py): Verification of user dashboard HTMX endpoints.
-- [verify_htmx_admin_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_htmx_admin_controls.py): Verification of admin dashboard HTMX endpoints.
-- [verify_list_dirs.py](file:///home/hubjupylab/hubjupylab/scratch/verify_list_dirs.py): Verification of user directory listing for rsync.
-- [verify_status_polling.py](file:///home/hubjupylab/hubjupylab/scratch/verify_status_polling.py): Verification of status polling endpoints and OOB properties.
+Scripts available in [/scratch](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch):
+- [verify_hub.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_hub.py): Standard verification of spawner, db, and user flows.
+- [verify_admin_controls.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_admin_controls.py): Verification of admin routes.
+- [verify_gpu.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_gpu.py): Verification of GPU config assignment and rsync failures.
+- [verify_htmx_user_controls.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_htmx_user_controls.py): Verification of user dashboard HTMX endpoints.
+- [verify_htmx_admin_controls.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_htmx_admin_controls.py): Verification of admin dashboard HTMX endpoints.
+- [verify_list_dirs.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_list_dirs.py): Verification of user directory listing for rsync.
+- [verify_status_polling.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_status_polling.py): Verification of status polling endpoints and OOB properties.
+- [verify_reset_password.ts](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_reset_password.ts): End-to-end integration test verifying admin password resets, database flag setting, force redirects to `/change-password`, and password change updates.
