@@ -38,6 +38,14 @@
                     class="btn btn-success btn-sm">Start</button>
             {% endif %}
             
+            <button type="button"
+                    onclick="event.stopPropagation()"
+                    hx-post="/admin/users/{{ u.username }}/reset-password"
+                    hx-confirm="Are you sure you want to reset the password for {{ u.username }}?"
+                    hx-swap="none"
+                    hx-disabled-elt="this"
+                    class="btn btn-outline btn-sm">Reset PW</button>
+            
             <form hx-post="/admin/users/{{ u.username }}" 
                   hx-confirm="Are you sure you want to delete user {{ u.username }}?" 
                   hx-target="#user-row-{{ u.username }}" 

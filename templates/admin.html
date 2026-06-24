@@ -112,7 +112,12 @@
 {% endblock %}
 
 {% block content %}
-<div x-data="{ activeTab: 'users' }" x-init="
+<div x-data="{ 
+    activeTab: 'users', 
+    showResetModal: false, 
+    resetUsername: '', 
+    tempPassword: '' 
+}" x-init="
     const urlParams = new URLSearchParams(window.location.search);
     const tabParam = urlParams.get('tab');
     if (tabParam && ['users', 'logs', 'gpu'].includes(tabParam)) {
@@ -142,7 +147,7 @@
         <div class="card">
             <div class="section-title">
                 <div>
-                    <h2>JupyterLab Hub Users</h2>
+                    <h2>HubJupyLab</h2>
                     <span style="font-size: 0.875rem; color: var(--text-secondary);">Ports 8081 - 8089</span>
                 </div>
             </div>
@@ -244,10 +249,42 @@
             </form>
         </div>
     </div>
+
+    <!-- Temporary Password Display Modal (Alpine-managed) -->
+    <div id="passwordResetModal" 
+         class="modal-overlay"
+         x-show="showResetModal" 
+         x-transition
+         @password-reset.window="showResetModal = true; resetUsername = $event.detail.username; tempPassword = $event.detail.tempPass">
+        <div class="card" style="width: 100%; max-width: 400px; margin: 1rem; border: 1px solid var(--border-color); animation: modalFadeIn 0.3s ease;">
+            <div class="section-title" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+                <h2>One-Time Password</h2>
+                <button @click="showResetModal = false" class="btn btn-outline btn-sm" style="padding: 0.2rem 0.5rem; font-size: 0.9rem; border: none; background: transparent; color: var(--text-secondary); cursor: pointer;">✕</button>
+            </div>
+            <div style="margin-bottom: 1.5rem;">
+                <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    A temporary one-time password has been generated for user <strong x-text="resetUsername" style="color: var(--text-primary);"></strong>:
+                </p>
+                <div style="padding: 0.75rem; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+                    <code x-text="tempPassword" style="font-size: 1.1rem; color: var(--accent-color); font-weight: bold; letter-spacing: 0.05em;"></code>
+                    <button @click="navigator.clipboard.writeText(tempPassword).then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Temporary password copied!', type: 'success' } })))" class="copy-btn" title="Copy password" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0.2rem;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    </button>
+                </div>
+                <p style="font-size: 0.75rem; color: #ef4444; margin-top: 1rem;">
+                    ⚠️ Please copy this password now. It will not be shown again, and the user must change it on their next login.
+                </p>
+            </div>
+            <button @click="showResetModal = false" class="btn btn-primary" style="width: 100%;">Done</button>
+        </div>
+    </div>
 </div>
 
 <!-- Create User Modal Overlay -->
-<div id="createUserModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); z-index: 1000; justify-content: center; align-items: center;">
+<div id="createUserModal" class="modal-overlay" style="display: none; z-index: 1000;">
     <div class="card" style="width: 100%; max-width: 400px; margin: 1rem; border: 1px solid var(--border-color); animation: modalFadeIn 0.3s ease;">
         <div class="section-title" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
             <h2>Create New User</h2>
@@ -291,8 +328,8 @@ function closeCreateUserModal() {
 
 // Close modal when clicking outside card
 window.onclick = function(event) {
-    const modal = document.getElementById("createUserModal");
-    if (event.target == modal) {
+    const createUserModal = document.getElementById("createUserModal");
+    if (event.target == createUserModal) {
         closeCreateUserModal();
     }
 }

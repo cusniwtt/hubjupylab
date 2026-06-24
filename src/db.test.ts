@@ -27,7 +27,8 @@ const {
   saveGpuConfig,
   assignGpu,
   unassignGpu,
-  updateGpuInitStatus
+  updateGpuInitStatus,
+  changePassword
 } = require("./db");
 
 describe("Database Module", () => {
@@ -108,6 +109,21 @@ describe("Database Module", () => {
     user = getUserByUsername("testuser");
     expect(user!.gpu_endpoint).toBeNull();
     expect(user!.gpu_init_status).toBeNull();
+  });
+
+  test("changePassword", async () => {
+    let user = getUserByUsername("testuser");
+    expect(user!.must_change_password).toBe(0);
+
+    await changePassword("testuser", "newsecurepass123", true);
+    user = getUserByUsername("testuser");
+    expect(user!.must_change_password).toBe(1);
+    expect(await verifyPassword("newsecurepass123", user!.password_hash)).toBe(true);
+
+    await changePassword("testuser", "anothersecurepass456", false);
+    user = getUserByUsername("testuser");
+    expect(user!.must_change_password).toBe(0);
+    expect(await verifyPassword("anothersecurepass456", user!.password_hash)).toBe(true);
   });
 
   test("deleteUser", () => {

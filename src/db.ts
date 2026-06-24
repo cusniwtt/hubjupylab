@@ -19,6 +19,7 @@ export interface User {
   gpu_ssh_host: string | null;
   gpu_ssh_port: number | null;
   gpu_init_status: string | null;
+  must_change_password: number;
 }
 
 export interface GpuConfig {
@@ -39,7 +40,8 @@ export async function initDb(): Promise<void> {
       role TEXT NOT NULL DEFAULT 'user',
       port INTEGER UNIQUE,
       token TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      must_change_password INTEGER DEFAULT 0
     )
   `);
 
@@ -57,6 +59,13 @@ export async function initDb(): Promise<void> {
     } catch (_) {
       // Column already exists
     }
+  }
+
+  // Add must_change_password column if missing
+  try {
+    db.exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0");
+  } catch (_) {
+    // Column already exists
   }
 
   db.exec(`
@@ -183,4 +192,17 @@ export function unassignGpu(username: string): void {
 
 export function updateGpuInitStatus(username: string, status: string | null): void {
   db.query("UPDATE users SET gpu_init_status = ? WHERE username = ?").run(status, username);
+}
+
+export async function changePassword(
+  username: string,
+  newPassword: string,
+  mustChange: boolean = false
+): Promise<void> {
+  const hash = await Bun.password.hash(newPassword, "bcrypt");
+  db.query("UPDATE users SET password_hash = ?, must_change_password = ? WHERE username = ?").run(
+    hash,
+    mustChange ? 1 : 0,
+    username
+  );
 }

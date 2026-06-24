@@ -10,7 +10,7 @@ import * as spawner from "./spawner";
 import * as gpu from "./gpu";
 
 // Configure Nunjucks
-const njk = nunjucks.configure("templates", { autoescape: true });
+const njk = nunjucks.configure("templates", { autoescape: true, noCache: true });
 
 function render(name: string, ctx: Record<string, any> = {}): string {
   return njk.render(name, ctx);
@@ -142,6 +142,7 @@ const app = new Elysia()
     const user = getCurrentUser(cookie);
     if (!user) return redirect("/", 302);
     if (user.role === "admin") return redirect("/admin", 302);
+    if (user.must_change_password) return redirect("/change-password", 302);
 
     const hostIp = resolveHostIp(request);
     const isRunning = await spawner.isSessionRunning(user.username);
@@ -161,11 +162,43 @@ const app = new Elysia()
     }), { headers: { "Content-Type": "text/html" } });
   })
 
+  // --- Change Password ---
+  .get("/change-password", ({ cookie, redirect, query }) => {
+    const user = getCurrentUser(cookie);
+    if (!user) return redirect("/", 302);
+    return new Response(render("change_password.html", {
+      user, error: query.error ?? null, success: query.success ?? null
+    }), { headers: { "Content-Type": "text/html" } });
+  })
+
+  .post("/change-password", async ({ cookie, body, redirect }) => {
+    const user = getCurrentUser(cookie);
+    if (!user) return redirect("/", 302);
+    const { password, confirm_password } = body as { password?: string; confirm_password?: string };
+    if (!password || !confirm_password) {
+      return redirect("/change-password?error=Missing+fields", 303);
+    }
+    if (password !== confirm_password) {
+      return redirect("/change-password?error=Passwords+do+not+match", 303);
+    }
+    if (password.length < 8) {
+      return redirect("/change-password?error=Password+must+be+at+least+8+characters", 303);
+    }
+    await db.changePassword(user.username, password, false);
+    return redirect("/dashboard?success=Password+changed+successfully", 303);
+  })
+
   // --- User Session Controls ---
   .post("/session/start", async ({ cookie, request, redirect, headers }) => {
     const user = getCurrentUser(cookie);
     if (!user) return redirect("/", 302);
     if (user.role === "admin") return redirect("/admin", 302);
+    if (user.must_change_password) {
+      if (headers["hx-request"] === "true") {
+        return new Response("", { headers: { "HX-Redirect": "/change-password" } });
+      }
+      return redirect("/change-password", 302);
+    }
 
     const username = user.username;
     const port = user.port!;
@@ -220,6 +253,12 @@ const app = new Elysia()
     const user = getCurrentUser(cookie);
     if (!user) return redirect("/", 302);
     if (user.role === "admin") return redirect("/admin", 302);
+    if (user.must_change_password) {
+      if (headers["hx-request"] === "true") {
+        return new Response("", { headers: { "HX-Redirect": "/change-password" } });
+      }
+      return redirect("/change-password", 302);
+    }
 
     const username = user.username;
     const port = user.port!;
@@ -272,6 +311,12 @@ const app = new Elysia()
     const user = getCurrentUser(cookie);
     if (!user) return redirect("/", 302);
     if (user.role === "admin") return redirect("/admin", 302);
+    if (user.must_change_password) {
+      if (headers["hx-request"] === "true") {
+        return new Response("", { headers: { "HX-Redirect": "/change-password" } });
+      }
+      return redirect("/change-password", 302);
+    }
 
     const username = user.username;
     const port = user.port!;
@@ -321,9 +366,15 @@ const app = new Elysia()
     return redirect("/dashboard?success=JupyterLab+restarted", 303);
   })
 
-  .get("/session/status", async ({ cookie, request, redirect }) => {
+  .get("/session/status", async ({ cookie, request, redirect, headers }) => {
     const user = getCurrentUser(cookie);
     if (!user) return redirect("/", 302);
+    if (user.must_change_password) {
+      if (headers["hx-request"] === "true") {
+        return new Response("", { headers: { "HX-Redirect": "/change-password" } });
+      }
+      return redirect("/change-password", 302);
+    }
     const hostIp = resolveHostIp(request);
     const isRunning = await spawner.isSessionRunning(user.username);
     const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
@@ -471,6 +522,42 @@ const app = new Elysia()
     }
 
     return redirect(`/admin?success=${encodeURIComponent(msg)}`, 303);
+  })
+
+  .post("/admin/users/:username/reset-password", async ({ params, cookie, headers, redirect }) => {
+    const admin = getCurrentUser(cookie);
+    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    const username = params.username;
+    const user = db.getUserByUsername(username);
+    if (!user) {
+      if (headers["hx-request"] === "true") {
+        return new Response("", { status: 404, headers: {
+          "HX-Trigger": JSON.stringify({ showToast: { message: "User not found", type: "error" } })
+        }});
+      }
+      return redirect("/admin?error=User+not+found", 303);
+    }
+
+    const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let tempPass = "temp-";
+    for (let i = 0; i < 8; i++) {
+      tempPass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    await db.changePassword(username, tempPass, true);
+
+    const isHtmx = headers["hx-request"] === "true";
+    if (isHtmx) {
+      return new Response("", {
+        headers: {
+          "HX-Trigger": JSON.stringify({
+            showToast: { message: `Password reset for ${username}`, type: "success" },
+            "password-reset": { username, tempPass }
+          })
+        }
+      });
+    }
+    return redirect(`/admin?success=Password+reset+for+${username}.+New+temp+password:+${tempPass}`, 303);
   })
 
   .post("/admin/session/start/:username", async ({ params, cookie, request, redirect, headers }) => {

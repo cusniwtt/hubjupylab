@@ -24,4 +24,5 @@ dev_users/
 node_modules/
 bun.lock
 dist/
+home_hubjupylab/
 

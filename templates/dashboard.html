@@ -8,7 +8,11 @@
         <div class="status-section">
             <div>
                 <h2 style="font-size: 1.5rem; margin-bottom: 0.25rem;">Your JupyterLab Server</h2>
-                <p style="font-size: 0.875rem; color: var(--text-secondary);">Port Assignment: <code>{{ user_port }}</code></p>
+                <p style="font-size: 0.875rem; color: var(--text-secondary);">
+                    Port Assignment: <code>{{ user_port }}</code>
+                    <span style="margin: 0 0.5rem; color: var(--border-color);">|</span>
+                    <a href="/change-password" style="color: var(--accent-color); text-decoration: none;">🔑 Change Password</a>
+                </p>
             </div>
             <div>
                 {% if is_running %}
