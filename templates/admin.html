@@ -116,7 +116,23 @@
     activeTab: 'users', 
     showResetModal: false, 
     resetUsername: '', 
-    tempPassword: '' 
+    tempPassword: '',
+    expandedPanels: new Set(),
+    togglePanel(username) {
+        if (this.expandedPanels.has(username)) {
+            this.expandedPanels.delete(username);
+        } else {
+            this.expandedPanels.add(username);
+            this.$nextTick(() => {
+                const consoleBox = document.getElementById('gpu-console-' + username);
+                if (consoleBox) htmx.trigger(consoleBox, 'load-log');
+            });
+        }
+        this.expandedPanels = new Set(this.expandedPanels);
+    },
+    isPanelOpen(username) {
+        return this.expandedPanels.has(username);
+    }
 }" x-init="
     const urlParams = new URLSearchParams(window.location.search);
     const tabParam = urlParams.get('tab');
@@ -334,40 +350,19 @@ window.onclick = function(event) {
     }
 }
 
-// Toggle GPU panel expansion
-function toggleGpuPanel(username) {
-    const panel = document.getElementById('gpu-panel-' + username);
-    if (!panel) return;
-    if (panel.style.display === 'none') {
-        panel.style.display = '';
-        const consoleBox = document.getElementById('gpu-console-' + username);
-        if (consoleBox) {
-            htmx.trigger(consoleBox, 'load-log');
-        }
-    } else {
-        panel.style.display = 'none';
-    }
-}
-
-// Preserve expand/collapse state of GPU panels across HTMX swaps
-const panelStates = {};
-document.addEventListener('htmx:beforeSwap', function(evt) {
-    const targetId = evt.detail.target.id;
-    if (targetId && targetId.startsWith('user-row-')) {
-        const username = targetId.replace('user-row-', '');
-        const panel = document.getElementById('gpu-panel-' + username);
-        if (panel) {
-            panelStates[username] = panel.style.display;
-        }
-    }
-});
+// After an HTMX row swap, re-trigger load-log on any currently-open panel
+// so the console log refreshes without the user having to close/reopen.
 document.addEventListener('htmx:afterSwap', function(evt) {
-    const targetId = evt.detail.target.id;
-    if (targetId && targetId.startsWith('user-row-')) {
+    const targetId = evt.detail.target?.id || '';
+    if (targetId.startsWith('user-row-')) {
         const username = targetId.replace('user-row-', '');
-        const panel = document.getElementById('gpu-panel-' + username);
-        if (panel && panelStates[username] !== undefined) {
-            panel.style.display = panelStates[username];
+        // Alpine $data is on the outermost x-data element
+        const root = document.querySelector('[x-data]');
+        if (!root || !root._x_dataStack) return;
+        const data = root._x_dataStack[0];
+        if (data && data.expandedPanels && data.expandedPanels.has(username)) {
+            const consoleBox = document.getElementById('gpu-console-' + username);
+            if (consoleBox) htmx.trigger(consoleBox, 'load-log');
         }
     }
 });

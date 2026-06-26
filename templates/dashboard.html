@@ -284,10 +284,13 @@ function dashboardState() {
                 rootRow.innerHTML = `<span style="margin-right: 0.4rem; width: 12px; display: inline-block;"></span><span style="margin-right: 0.4rem;">🏠</span>[Sync Entire Workspace]`;
                 rootRow.onmouseover = () => rootRow.style.backgroundColor = "rgba(99, 102, 241, 0.15)";
                 rootRow.onmouseout = () => rootRow.style.backgroundColor = "transparent";
-                rootRow.onclick = () => {
-                    document.getElementById("sync_subpath").value = "";
-                    window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: "Selected entire workspace root", type: "success" } }));
+                const selectAndCollapse = (path, label) => {
+                    document.getElementById("sync_subpath").value = path;
+                    window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: label, type: "success" } }));
+                    this.showTree = false;
                 };
+
+                rootRow.onclick = () => selectAndCollapse("", "Selected entire workspace root");
                 container.appendChild(rootRow);
                 
                 if (data.length === 0) {
@@ -299,8 +302,7 @@ function dashboardState() {
                     container.appendChild(empty);
                 } else {
                     renderTree(data, container, (path) => {
-                        document.getElementById("sync_subpath").value = path;
-                        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Selected directory: ${path}`, type: "success" } }));
+                        selectAndCollapse(path, `Selected: ${path}`);
                     });
                 }
                 this.treeLoaded = true;

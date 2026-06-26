@@ -76,7 +76,7 @@
             <span style="color: var(--text-secondary); font-style: italic; font-size: 0.75rem;">None</span>
             {% endif %}
             
-            <button type="button" onclick="toggleGpuPanel('{{ u.username }}')" class="btn btn-sm btn-outline" style="padding: 0.2rem 0.4rem; font-size: 0.75rem;">
+            <button type="button" @click="togglePanel('{{ u.username }}')" class="btn btn-sm btn-outline" style="padding: 0.2rem 0.4rem; font-size: 0.75rem;">
                 ⚙️ Config
             </button>
         </div>
@@ -84,7 +84,10 @@
 </tr>
 
 {% if not is_poll %}
-<tr id="gpu-panel-{{ u.username }}" style="display: none;" hx-swap-oob="true">
+<tr id="gpu-panel-{{ u.username }}" hx-swap-oob="true"
+    x-show="isPanelOpen('{{ u.username }}')"
+    x-transition
+    style="display: none;">
     <td colspan="6" style="padding: 1.5rem; background-color: rgba(30, 41, 59, 0.15); border-bottom: 1px solid var(--border-color);">
         <div class="gpu-grid">
             <!-- Left Column: GPU Config Form -->
