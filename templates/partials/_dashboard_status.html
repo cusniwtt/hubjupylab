@@ -131,22 +131,46 @@
         {% endif %}
     </div>
     
+    {% if gpu_init_status == 'ready' %}
+    <!-- GPU Session Password -->
+    <div style="margin-bottom: 0.75rem; padding: 0.6rem 0.75rem; background: rgba(124, 58, 237, 0.1); border: 1px solid rgba(124, 58, 237, 0.3); border-radius: 6px;">
+        <span style="font-size: 0.75rem; color: #a78bfa; display: block; margin-bottom: 0.2rem;">GPU Session Password (for Code Server &amp; JupyterLab):</span>
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
+            <code id="gpuTokenDisplay" style="font-size: 0.85rem; color: #c4b5fd; font-weight: bold; letter-spacing: 0.04em; word-break: break-all;">{{ gpu_token }}</code>
+            <button onclick="navigator.clipboard.writeText('{{ gpu_token }}').then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'GPU password copied!', type: 'success' } })))" class="copy-btn" title="Copy GPU password" style="background: none; border: none; color: #a78bfa; cursor: pointer; padding: 0.2rem; flex-shrink: 0;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+
     <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; width: 100%;">
-        {% if gpu_init_status == 'ready' %}
         {% set separator = '&' if '?' in gpu_endpoint else '?' %}
         <a href="{{ gpu_endpoint }}{{ separator }}token={{ gpu_token }}" target="_blank" class="btn" style="background: linear-gradient(135deg, #7c3aed, #6366f1); color: white; font-weight: 600; text-decoration: none; text-align: center; width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
             <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/jupyter.svg" alt="Jupyter" style="width: 18px; height: 18px; filter: brightness(0) invert(1);">
             Launch GPU JupyterLab
         </a>
+        {% if gpu_code_server_url %}
         <a href="{{ gpu_code_server_url }}" target="_blank" class="btn btn-outline" style="border-color: #7c3aed; color: #a78bfa; font-weight: 600; text-decoration: none; text-align: center; width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
             <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/coder.svg" alt="Code Server" style="width: 18px; height: 18px;">
             Launch GPU Code Server
         </a>
-        {% else %}
+        {% endif %}
+        {% if gpu_streamlit_url %}
+        <a href="{{ gpu_streamlit_url }}" target="_blank" class="btn btn-outline" style="border-color: #f97316; color: #fb923c; font-weight: 600; text-decoration: none; text-align: center; width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L2 19h20L12 2z"/></svg>
+            Launch GPU Streamlit
+        </a>
+        {% endif %}
+    </div>
+    {% else %}
+    <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; width: 100%;">
         <button class="btn btn-outline" style="opacity: 0.5; cursor: not-allowed; width: 100%;" disabled>
             Launch GPU (Not Ready)
         </button>
-        {% endif %}
     </div>
+    {% endif %}
 </div>
 {% endif %}
