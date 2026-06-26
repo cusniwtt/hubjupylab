@@ -14,7 +14,8 @@ if (existsSync(TEST_DB)) {
 
 // Dynamically require to avoid ES import hoisting issues
 const { initDb, createUser, deleteUser, assignGpu } = require("./db");
-const { testGpuSsh, stopGpuSession, getLastGpuLog, rsyncToGpuStream, isValidGpuEndpoint, gpuInitStream } = require("./gpu");
+const { testGpuSsh, stopGpuSession, getLastGpuLog, rsyncToGpuStream, isValidGpuEndpoint, gpuInitStream,
+  validateGpuUsername, validateSshUser, validateSshHost, validateRemoteBaseDir } = require("./gpu");
 
 describe("GPU Module", () => {
   beforeAll(async () => {
@@ -180,5 +181,82 @@ describe("GPU Module", () => {
     expect(SYNC_EXCLUDES).toContain(".local");
     expect(SYNC_EXCLUDES).toContain("nohup.out");
     expect(SYNC_EXCLUDES).toContain(".code-server");
+  });
+
+  // --- Injection validator tests ---
+
+  test("validateGpuUsername allows valid names", () => {
+    expect(() => validateGpuUsername("alice")).not.toThrow();
+    expect(() => validateGpuUsername("user-1")).not.toThrow();
+    expect(() => validateGpuUsername("user_2")).not.toThrow();
+  });
+
+  test("validateGpuUsername rejects injection strings", () => {
+    expect(() => validateGpuUsername("user;rm -rf /")).toThrow();
+    expect(() => validateGpuUsername("user$(id)")).toThrow();
+    expect(() => validateGpuUsername("../etc/passwd")).toThrow();
+    expect(() => validateGpuUsername("user name")).toThrow();
+    expect(() => validateGpuUsername("")).toThrow();
+  });
+
+  test("validateSshUser allows valid users", () => {
+    expect(() => validateSshUser("root")).not.toThrow();
+    expect(() => validateSshUser("ubuntu")).not.toThrow();
+    expect(() => validateSshUser("user_1")).not.toThrow();
+  });
+
+  test("validateSshUser rejects injection strings", () => {
+    expect(() => validateSshUser("root;id")).toThrow();
+    expect(() => validateSshUser("root$(id)")).toThrow();
+    expect(() => validateSshUser("")).toThrow();
+  });
+
+  test("validateSshHost allows valid hostnames and IPs", () => {
+    expect(() => validateSshHost("192.168.1.1")).not.toThrow();
+    expect(() => validateSshHost("gpu.example.com")).not.toThrow();
+    expect(() => validateSshHost("my-gpu-host")).not.toThrow();
+  });
+
+  test("validateSshHost rejects injection strings", () => {
+    expect(() => validateSshHost("host;rm -rf /")).toThrow();
+    expect(() => validateSshHost("host$(id)")).toThrow();
+    expect(() => validateSshHost("host name")).toThrow();
+    expect(() => validateSshHost("")).toThrow();
+  });
+
+  test("validateRemoteBaseDir allows valid absolute paths", () => {
+    expect(() => validateRemoteBaseDir("/workspace")).not.toThrow();
+    expect(() => validateRemoteBaseDir("/home/user/data")).not.toThrow();
+    expect(() => validateRemoteBaseDir("/mnt/storage-01")).not.toThrow();
+  });
+
+  test("validateRemoteBaseDir rejects injection and traversal", () => {
+    expect(() => validateRemoteBaseDir("/workspace;rm -rf /")).toThrow();
+    expect(() => validateRemoteBaseDir("/workspace/../etc")).toThrow();
+    expect(() => validateRemoteBaseDir("workspace")).toThrow(); // relative path
+    expect(() => validateRemoteBaseDir("")).toThrow();
+    expect(() => validateRemoteBaseDir("/workspace$(id)")).toThrow();
+  });
+
+  test("gpuInitStream rejects invalid username", () => {
+    expect(() => gpuInitStream("bad;user", "127.0.0.1", 22, "/key", "root", "token", "", "/workspace")).toThrow();
+  });
+
+  test("gpuInitStream rejects invalid ssh host", () => {
+    expect(() => gpuInitStream("validuser", "bad;host", 22, "/key", "root", "token", "", "/workspace")).toThrow();
+  });
+
+  test("gpuInitStream rejects invalid remote_base_dir", () => {
+    expect(() => gpuInitStream("validuser", "127.0.0.1", 22, "/key", "root", "token", "", "relative/path")).toThrow();
+  });
+
+  test("testGpuSsh returns false for invalid host", async () => {
+    const [ok, msg] = await testGpuSsh("bad;host$(id)", 22, "/dummy/key", "root");
+    expect(ok).toBe(false);
+    expect(msg).toContain("Invalid SSH host");
+  });
+
+  test("rsync streams reject invalid username", async () => {
+    expect(() => rsyncToGpuStream("bad;user")).toThrow();
   });
 });

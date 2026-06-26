@@ -15,6 +15,8 @@ export interface User {
   token: string | null;
   created_at: string;
   gpu_endpoint: string | null;
+  gpu_streamlit_endpoint: string | null;
+  gpu_code_server_endpoint: string | null;
   gpu_token: string | null;
   gpu_ssh_host: string | null;
   gpu_ssh_port: number | null;
@@ -48,6 +50,8 @@ export async function initDb(): Promise<void> {
   // Add GPU columns if missing
   const gpuCols = [
     "gpu_endpoint TEXT",
+    "gpu_streamlit_endpoint TEXT",
+    "gpu_code_server_endpoint TEXT",
     "gpu_token TEXT",
     "gpu_ssh_host TEXT",
     "gpu_ssh_port INTEGER",
@@ -172,7 +176,9 @@ export function assignGpu(
   gpu_endpoint: string,
   gpu_token: string,
   gpu_ssh_host: string,
-  gpu_ssh_port: number
+  gpu_ssh_port: number,
+  gpu_streamlit_endpoint: string = "",
+  gpu_code_server_endpoint: string = ""
 ): void {
   const user = getUserByUsername(username);
   let newStatus = "pending";
@@ -180,18 +186,29 @@ export function assignGpu(
     newStatus = user.gpu_init_status;
   }
   db.query(
-    "UPDATE users SET gpu_endpoint = ?, gpu_token = ?, gpu_ssh_host = ?, gpu_ssh_port = ?, gpu_init_status = ? WHERE username = ?"
-  ).run(gpu_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port, newStatus, username);
+    "UPDATE users SET gpu_endpoint = ?, gpu_streamlit_endpoint = ?, gpu_code_server_endpoint = ?, gpu_token = ?, gpu_ssh_host = ?, gpu_ssh_port = ?, gpu_init_status = ? WHERE username = ?"
+  ).run(gpu_endpoint, gpu_streamlit_endpoint, gpu_code_server_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port, newStatus, username);
 }
 
 export function unassignGpu(username: string): void {
   db.query(
-    "UPDATE users SET gpu_endpoint = NULL, gpu_token = NULL, gpu_ssh_host = NULL, gpu_ssh_port = NULL, gpu_init_status = NULL WHERE username = ?"
+    "UPDATE users SET gpu_endpoint = NULL, gpu_streamlit_endpoint = NULL, gpu_code_server_endpoint = NULL, gpu_token = NULL, gpu_ssh_host = NULL, gpu_ssh_port = NULL, gpu_init_status = NULL WHERE username = ?"
   ).run(username);
 }
 
 export function updateGpuInitStatus(username: string, status: string | null): void {
   db.query("UPDATE users SET gpu_init_status = ? WHERE username = ?").run(status, username);
+}
+
+/**
+ * Atomically set gpu_init_status = 'running' only if current status is NOT 'running'.
+ * Returns true if the update succeeded (i.e., we won the race), false if already running.
+ */
+export function trySetGpuInitRunning(username: string): boolean {
+  const result = db.query(
+    "UPDATE users SET gpu_init_status = 'running' WHERE username = ? AND (gpu_init_status IS NULL OR gpu_init_status != 'running')"
+  ).run(username);
+  return result.changes > 0;
 }
 
 export async function changePassword(

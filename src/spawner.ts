@@ -111,6 +111,12 @@ export async function spawnSession(username: string, port: number, token: string
   const winExit = await winProc.exited;
   if (winExit !== 0) {
     console.error(`Error spawning code-server window for ${username}: ${winStderr}`);
+    // Kill the orphaned jupyter session so state stays consistent
+    const killProc = Bun.spawn(["tmux", "kill-session", "-t", sessionName], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await killProc.exited;
     return false;
   }
 

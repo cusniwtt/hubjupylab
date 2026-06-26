@@ -8,6 +8,7 @@ import * as config from "./config";
 import * as db from "./db";
 import * as spawner from "./spawner";
 import * as gpu from "./gpu";
+import { validateSshUser, validateSshHost, validateRemoteBaseDir } from "./gpu";
 
 // Configure Nunjucks
 const njk = nunjucks.configure("templates", { autoescape: true, noCache: true });
@@ -16,20 +17,40 @@ function render(name: string, ctx: Record<string, any> = {}): string {
   return njk.render(name, ctx);
 }
 
-// Simple cookie signing using HMAC
-function signCookie(value: string): string {
-  const sig = crypto.createHmac("sha256", config.SECRET_KEY).update(value).digest("base64url");
-  return `${value}.${sig}`;
+// Session TTL: default 24 hours, configurable via SESSION_TTL_HOURS env var
+const SESSION_TTL_MS = parseInt(Bun.env.SESSION_TTL_HOURS ?? "24", 10) * 60 * 60 * 1000;
+
+// Cookie format: "username|issuedAtMs.hmac"
+function signCookie(username: string): string {
+  const payload = `${username}|${Date.now()}`;
+  const sig = crypto.createHmac("sha256", config.SECRET_KEY).update(payload).digest("base64url");
+  return `${payload}.${sig}`;
 }
 
 function unsignCookie(signed: string): string | null {
   const idx = signed.lastIndexOf(".");
   if (idx < 0) return null;
-  const value = signed.slice(0, idx);
+  const payload = signed.slice(0, idx);
   const sig = signed.slice(idx + 1);
-  const expected = crypto.createHmac("sha256", config.SECRET_KEY).update(value).digest("base64url");
+  const expected = crypto.createHmac("sha256", config.SECRET_KEY).update(payload).digest("base64url");
   if (sig !== expected) return null;
-  return value;
+  const sep = payload.lastIndexOf("|");
+  if (sep < 0) return null;
+  const username = payload.slice(0, sep);
+  const issuedAt = parseInt(payload.slice(sep + 1), 10);
+  if (isNaN(issuedAt) || Date.now() - issuedAt > SESSION_TTL_MS) return null;
+  return username;
+}
+
+function isHttps(request: Request): boolean {
+  const proto = request.headers.get("x-forwarded-proto");
+  if (proto) return proto === "https";
+  return new URL(request.url).protocol === "https:";
+}
+
+function sessionCookieFlags(request: Request): string {
+  const secure = isHttps(request) ? "; Secure" : "";
+  return `HttpOnly; SameSite=Lax; Path=/${secure}`;
 }
 
 function getCurrentUser(cookie: Record<string, any>): db.User | null {
@@ -52,6 +73,18 @@ function resolveHostIp(request: Request): string {
   if (config.HOST_IP) return config.HOST_IP;
   const url = new URL(request.url);
   return url.hostname;
+}
+
+/** Build GPU template context from a User row. Replaces the repeated inline .replace() hacks. */
+function buildGpuCtx(user: db.User): Record<string, any> {
+  return {
+    has_gpu: !!user.gpu_endpoint,
+    gpu_endpoint: user.gpu_endpoint ?? "",
+    gpu_streamlit_url: user.gpu_streamlit_endpoint ?? "",
+    gpu_code_server_url: user.gpu_code_server_endpoint ?? "",
+    gpu_init_status: user.gpu_init_status ?? "",
+    gpu_token: user.gpu_token ?? "",
+  };
 }
 
 async function getEnrichedUsers(request: Request): Promise<Record<string, any>[]> {
@@ -118,22 +151,27 @@ const app = new Elysia()
     }), { headers: { "Content-Type": "text/html" } });
   })
 
-  .post("/login", async ({ body, set, redirect }) => {
+  .post("/login", async ({ body, set, redirect, request }) => {
     const { username, password } = body as { username?: string; password?: string };
     if (!username || !password) {
       return redirect("/?error=Missing+credentials", 303);
     }
     const user = db.getUserByUsername(username);
-    if (!user || !(await db.verifyPassword(password, user.password_hash))) {
+    // Always run bcrypt to prevent username enumeration via timing
+    const DUMMY_HASH = "$2b$10$invalidhashvaluethatnevermatchesXXXXXXXXXXXXXXXXXXXXX";
+    const passwordOk = user
+      ? await db.verifyPassword(password, user.password_hash)
+      : (await db.verifyPassword(password, DUMMY_HASH), false);
+    if (!user || !passwordOk) {
       return redirect("/?error=Invalid+credentials", 303);
     }
     const signed = signCookie(username);
-    set.headers["Set-Cookie"] = `hub_session=${signed}; HttpOnly; SameSite=Lax; Path=/`;
-    return redirect(user.role === "admin" ? "/admin" : "/dashboard", 303);
+    set.headers["Set-Cookie"] = `hub_session=${signed}; ${sessionCookieFlags(request)}`;
+    return redirect(user.must_change_password ? "/change-password" : (user.role === "admin" ? "/admin" : "/dashboard"), 303);
   })
 
-  .get("/logout", ({ set, redirect }) => {
-    set.headers["Set-Cookie"] = "hub_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+  .get("/logout", ({ set, redirect, request }) => {
+    set.headers["Set-Cookie"] = `hub_session=; ${sessionCookieFlags(request)}; Max-Age=0`;
     return redirect("/", 302);
   })
 
@@ -148,17 +186,12 @@ const app = new Elysia()
     const isRunning = await spawner.isSessionRunning(user.username);
     const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
     const codeServerUrl = isRunning && user.token ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
-    const gpuCodeServerUrl = user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "";
-    const hasGpu = !!user.gpu_endpoint;
 
     return new Response(render("dashboard.html", {
       user, is_running: isRunning, user_port: user.port,
-      jupyter_url: jupyterUrl, code_server_url: codeServerUrl, error: query.error ?? null,
-      success: query.success ?? null, has_gpu: hasGpu,
-      gpu_endpoint: user.gpu_endpoint ?? "",
-      gpu_code_server_url: gpuCodeServerUrl,
-      gpu_init_status: user.gpu_init_status ?? "",
-      gpu_token: user.gpu_token ?? ""
+      jupyter_url: jupyterUrl, code_server_url: codeServerUrl,
+      error: query.error ?? null, success: query.success ?? null,
+      ...buildGpuCtx(user)
     }), { headers: { "Content-Type": "text/html" } });
   })
 
@@ -214,13 +247,8 @@ const app = new Elysia()
         const csurl = isRunning && user.token ? buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET) : "";
         return new Response(render("partials/_dashboard_status.html", {
           is_running: isRunning, user_port: port, jupyter_url: jurl,
-          code_server_url: csurl,
-          has_gpu: !!user.gpu_endpoint,
-          gpu_endpoint: user.gpu_endpoint ?? "",
-          gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
-          gpu_init_status: user.gpu_init_status ?? "",
-          gpu_token: user.gpu_token ?? "",
-          user: user
+          code_server_url: csurl, user,
+          ...buildGpuCtx(user)
         }), { headers: {
           "Content-Type": "text/html",
           "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to start JupyterLab session", type: "error" } })
@@ -233,14 +261,10 @@ const app = new Elysia()
     user.token = token;
     if (isHtmx) {
       return new Response(render("partials/_dashboard_status.html", {
-        is_running: true, user_port: port, jupyter_url: buildJupyterUrl(hostIp, port, token),
+        is_running: true, user_port: port,
+        jupyter_url: buildJupyterUrl(hostIp, port, token),
         code_server_url: buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET),
-        has_gpu: !!user.gpu_endpoint,
-        gpu_endpoint: user.gpu_endpoint ?? "",
-        gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
-        gpu_init_status: user.gpu_init_status ?? "",
-        gpu_token: user.gpu_token ?? "",
-        user: user
+        user, ...buildGpuCtx(user)
       }), { headers: {
         "Content-Type": "text/html",
         "HX-Trigger": JSON.stringify({ showToast: { message: "JupyterLab started", type: "success" } })
@@ -273,13 +297,8 @@ const app = new Elysia()
         const csurl = isRunning && user.token ? buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET) : "";
         return new Response(render("partials/_dashboard_status.html", {
           is_running: isRunning, user_port: port, jupyter_url: jurl,
-          code_server_url: csurl,
-          has_gpu: !!user.gpu_endpoint,
-          gpu_endpoint: user.gpu_endpoint ?? "",
-          gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
-          gpu_init_status: user.gpu_init_status ?? "",
-          gpu_token: user.gpu_token ?? "",
-          user: user
+          code_server_url: csurl, user,
+          ...buildGpuCtx(user)
         }), { headers: {
           "Content-Type": "text/html",
           "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to stop JupyterLab session", type: "error" } })
@@ -291,14 +310,8 @@ const app = new Elysia()
     db.updateToken(username, null);
     if (isHtmx) {
       return new Response(render("partials/_dashboard_status.html", {
-        is_running: false, user_port: port, jupyter_url: "",
-        code_server_url: "",
-        has_gpu: !!user.gpu_endpoint,
-        gpu_endpoint: user.gpu_endpoint ?? "",
-        gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
-        gpu_init_status: user.gpu_init_status ?? "",
-        gpu_token: user.gpu_token ?? "",
-        user: user
+        is_running: false, user_port: port, jupyter_url: "", code_server_url: "",
+        user, ...buildGpuCtx(user)
       }), { headers: {
         "Content-Type": "text/html",
         "HX-Trigger": JSON.stringify({ showToast: { message: "JupyterLab stopped", type: "success" } })
@@ -324,20 +337,14 @@ const app = new Elysia()
     const token = crypto.randomBytes(16).toString("base64url");
     const isHtmx = headers["hx-request"] === "true";
 
-    await spawner.stopSession(username);
+    // spawnSession stops any existing session internally — no need for explicit stopSession here
     const success = await spawner.spawnSession(username, port, token);
     if (!success) {
       db.updateToken(username, null);
       if (isHtmx) {
         return new Response(render("partials/_dashboard_status.html", {
-          is_running: false, user_port: port, jupyter_url: "",
-          code_server_url: "",
-          has_gpu: !!user.gpu_endpoint,
-          gpu_endpoint: user.gpu_endpoint ?? "",
-          gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
-          gpu_init_status: user.gpu_init_status ?? "",
-          gpu_token: user.gpu_token ?? "",
-          user: user
+          is_running: false, user_port: port, jupyter_url: "", code_server_url: "",
+          user, ...buildGpuCtx(user)
         }), { headers: {
           "Content-Type": "text/html",
           "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to restart JupyterLab session", type: "error" } })
@@ -350,14 +357,10 @@ const app = new Elysia()
     user.token = token;
     if (isHtmx) {
       return new Response(render("partials/_dashboard_status.html", {
-        is_running: true, user_port: port, jupyter_url: buildJupyterUrl(hostIp, port, token),
+        is_running: true, user_port: port,
+        jupyter_url: buildJupyterUrl(hostIp, port, token),
         code_server_url: buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET),
-        has_gpu: !!user.gpu_endpoint,
-        gpu_endpoint: user.gpu_endpoint ?? "",
-        gpu_code_server_url: user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "",
-        gpu_init_status: user.gpu_init_status ?? "",
-        gpu_token: user.gpu_token ?? "",
-        user: user
+        user, ...buildGpuCtx(user)
       }), { headers: {
         "Content-Type": "text/html",
         "HX-Trigger": JSON.stringify({ showToast: { message: "JupyterLab restarted", type: "success" } })
@@ -379,14 +382,10 @@ const app = new Elysia()
     const isRunning = await spawner.isSessionRunning(user.username);
     const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
     const codeServerUrl = isRunning && user.token ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
-    const gpuCodeServerUrl = user.gpu_endpoint ? user.gpu_endpoint.replace("-8888", "-8889").replace(":8888", ":8889") : "";
     return new Response(render("partials/_dashboard_status.html", {
       is_running: isRunning, user_port: user.port,
-      jupyter_url: jupyterUrl, code_server_url: codeServerUrl, has_gpu: !!user.gpu_endpoint,
-      gpu_endpoint: user.gpu_endpoint ?? "",
-      gpu_code_server_url: gpuCodeServerUrl,
-      gpu_init_status: user.gpu_init_status ?? "",
-      gpu_token: user.gpu_token ?? "", user
+      jupyter_url: jupyterUrl, code_server_url: codeServerUrl, user,
+      ...buildGpuCtx(user)
     }), { headers: { "Content-Type": "text/html" } });
   })
 
@@ -495,6 +494,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
 
     // 1. Stop session
     await spawner.stopSession(username);
@@ -528,6 +530,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
     const user = db.getUserByUsername(username);
     if (!user) {
       if (headers["hx-request"] === "true") {
@@ -564,6 +569,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
     const user = db.getUserByUsername(username);
     const isHtmx = headers["hx-request"] === "true";
 
@@ -602,6 +610,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
     const user = db.getUserByUsername(username);
     const isHtmx = headers["hx-request"] === "true";
 
@@ -638,6 +649,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
     const user = db.getUserByUsername(username);
     const isHtmx = headers["hx-request"] === "true";
 
@@ -651,7 +665,7 @@ const app = new Elysia()
     const port = user.port!;
     const token = crypto.randomBytes(16).toString("base64url");
 
-    await spawner.stopSession(username);
+    // spawnSession stops any existing session internally — no need for explicit stopSession here
     const success = await spawner.spawnSession(username, port, token);
     if (!success) {
       db.updateToken(username, null);
@@ -679,6 +693,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
     const enriched = await enrichUser(username, request);
     if (!enriched) return new Response("User not found", { status: 404 });
     return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
@@ -708,13 +725,18 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
     const user = db.getUserByUsername(username);
     if (!user) return new Response("User not found", { status: 404 });
 
-    const { gpu_ssh_host, gpu_ssh_port, gpu_endpoint, gpu_token } = body as Record<string, any>;
+    const { gpu_ssh_host, gpu_ssh_port, gpu_endpoint, gpu_streamlit_endpoint, gpu_code_server_endpoint, gpu_token } = body as Record<string, any>;
     const host = (gpu_ssh_host ?? "").trim();
     const port = gpu_ssh_port ? parseInt(gpu_ssh_port, 10) : 22;
     const endpoint = (gpu_endpoint ?? "").trim();
+    const streamlitEndpoint = (gpu_streamlit_endpoint ?? "").trim();
+    const codeServerEndpoint = (gpu_code_server_endpoint ?? "").trim();
     const tokenToSave = (gpu_token ?? "").trim() || user.gpu_token || "";
 
     const isHtmx = headers["hx-request"] === "true";
@@ -734,7 +756,44 @@ const app = new Elysia()
       return redirect(`/admin?error=Invalid+GPU+endpoint`, 303);
     }
 
-    db.assignGpu(username, endpoint, tokenToSave, host, port);
+    if (host) {
+      try {
+        validateSshHost(host);
+      } catch (e: any) {
+        if (isHtmx) {
+          const enriched = await enrichUser(username, request);
+          return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
+            headers: {
+              "Content-Type": "text/html",
+              "HX-Trigger": JSON.stringify({
+                showToast: { message: `Invalid SSH host: ${e.message}`, type: "error" }
+              })
+            }
+          });
+        }
+        return redirect(`/admin?error=Invalid+SSH+host`, 303);
+      }
+    }
+
+    // Validate optional streamlit/code-server endpoints
+    for (const [label, ep] of [["Streamlit", streamlitEndpoint], ["Code Server", codeServerEndpoint]] as [string, string][]) {
+      if (ep !== "" && !gpu.isValidGpuEndpoint(ep)) {
+        if (isHtmx) {
+          const enriched = await enrichUser(username, request);
+          return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
+            headers: {
+              "Content-Type": "text/html",
+              "HX-Trigger": JSON.stringify({
+                showToast: { message: `Invalid ${label} endpoint URL`, type: "error" }
+              })
+            }
+          });
+        }
+        return redirect(`/admin?error=Invalid+${label}+endpoint`, 303);
+      }
+    }
+
+    db.assignGpu(username, endpoint, tokenToSave, host, port, streamlitEndpoint, codeServerEndpoint);
 
     if (isHtmx) {
       const enriched = await enrichUser(username, request);
@@ -755,6 +814,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
 
     db.unassignGpu(username);
 
@@ -774,10 +836,18 @@ const app = new Elysia()
     return redirect(`/admin?success=GPU+configuration+removed+for+${username}`, 303);
   })
 
-  .get("/admin/gpu/init-stream/:username", async ({ params, cookie }) => {
+  .get("/admin/gpu/init-stream/:username", async ({ params, cookie, headers }) => {
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
+    // CSRF guard for state-mutating GET
+    const fetchSite = headers["sec-fetch-site"];
+    if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "same-site") {
+      return new Response("Forbidden: cross-origin request", { status: 403 });
+    }
     const user = db.getUserByUsername(username);
     if (!user) return new Response("User not found", { status: 404 });
 
@@ -786,17 +856,6 @@ const app = new Elysia()
       "Cache-Control": "no-cache",
       "Connection": "keep-alive"
     };
-
-    if (user.gpu_init_status === "running") {
-      const encoder = new TextEncoder();
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(encoder.encode("data: Error: Initialization already in progress\n\n"));
-          controller.close();
-        }
-      });
-      return new Response(stream, { headers: sseHeaders });
-    }
 
     const sshHost = user.gpu_ssh_host;
     const sshPort = user.gpu_ssh_port ?? 22;
@@ -813,10 +872,24 @@ const app = new Elysia()
       return new Response(stream, { headers: sseHeaders });
     }
 
+    // Atomic TOCTOU guard: set 'running' only if not already running
+    const won = db.trySetGpuInitRunning(username);
+    if (!won) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode("data: Error: Initialization already in progress\n\n"));
+          controller.close();
+        }
+      });
+      return new Response(stream, { headers: sseHeaders });
+    }
+
     let token = user.gpu_token;
     if (!token) {
       token = crypto.randomBytes(16).toString("base64url");
-      db.assignGpu(username, user.gpu_endpoint ?? "", token, sshHost, sshPort);
+      db.assignGpu(username, user.gpu_endpoint ?? "", token, sshHost, sshPort,
+        user.gpu_streamlit_endpoint ?? "", user.gpu_code_server_endpoint ?? "");
     }
 
     const stringStream = gpu.gpuInitStream(
@@ -837,6 +910,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
 
     const [success, msg] = await gpu.stopGpuSession(username);
 
@@ -865,6 +941,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return redirect("/", 302);
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
 
     db.updateGpuInitStatus(username, null);
 
@@ -918,6 +997,25 @@ const app = new Elysia()
       return new Response(`SSH Key file not found: ${keyPath}`, { status: 400 });
     }
 
+    // Validate shell-safe values before storing
+    try {
+      if (host) validateSshHost(host);
+      validateSshUser(user);
+      validateRemoteBaseDir(rBaseDir);
+    } catch (e: any) {
+      if (isHtmx) {
+        return new Response("", {
+          status: 422,
+          headers: {
+            "HX-Trigger": JSON.stringify({
+              showToast: { message: `Invalid config value: ${e.message}`, type: "error" }
+            })
+          }
+        });
+      }
+      return new Response(`Invalid config value: ${e.message}`, { status: 400 });
+    }
+
     db.saveGpuConfig(host, port, user, keyPath, rBaseDir);
 
     if (isHtmx) {
@@ -936,6 +1034,9 @@ const app = new Elysia()
     const admin = getCurrentUser(cookie);
     if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
     const username = params.username;
+    try { spawner.validateUsername(username); } catch (_) {
+      return new Response("Invalid username", { status: 400 });
+    }
     const logContent = gpu.getLastGpuLog(username);
     return new Response(logContent, { headers: { "Content-Type": "text/plain" } });
   })
@@ -976,10 +1077,16 @@ const app = new Elysia()
   })
 
   // --- User GPU Sync & Tree API ---
-  .get("/session/gpu/sync-to-stream", ({ cookie, query, redirect }) => {
+  .get("/session/gpu/sync-to-stream", ({ cookie, query, redirect, headers, request }) => {
     const user = getCurrentUser(cookie);
     if (!user) return redirect("/", 302);
     if (user.role === "admin") return new Response("Forbidden", { status: 403 });
+    if (user.must_change_password) return new Response("Forbidden: change password first", { status: 403 });
+    // CSRF guard: SSE GET mutates state; verify same-origin via Sec-Fetch-Site
+    const fetchSite = headers["sec-fetch-site"];
+    if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "same-site") {
+      return new Response("Forbidden: cross-origin request", { status: 403 });
+    }
 
     const responseStream = toUint8ArrayStream(gpu.rsyncToGpuStream(user.username, query.path ?? ""));
     return new Response(responseStream, {
@@ -991,10 +1098,15 @@ const app = new Elysia()
     });
   })
 
-  .get("/session/gpu/sync-from-stream", ({ cookie, query, redirect }) => {
+  .get("/session/gpu/sync-from-stream", ({ cookie, query, redirect, headers, request }) => {
     const user = getCurrentUser(cookie);
     if (!user) return redirect("/", 302);
     if (user.role === "admin") return new Response("Forbidden", { status: 403 });
+    if (user.must_change_password) return new Response("Forbidden: change password first", { status: 403 });
+    const fetchSite = headers["sec-fetch-site"];
+    if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "same-site") {
+      return new Response("Forbidden: cross-origin request", { status: 403 });
+    }
 
     const responseStream = toUint8ArrayStream(gpu.rsyncFromGpuStream(user.username, query.path ?? ""));
     return new Response(responseStream, {
@@ -1010,6 +1122,7 @@ const app = new Elysia()
     const user = getCurrentUser(cookie);
     if (!user) return new Response("Unauthorized", { status: 401 });
     if (user.role === "admin") return new Response("Forbidden", { status: 403 });
+    if (user.must_change_password) return new Response("Forbidden: change password first", { status: 403 });
 
     const userDir = join(config.BASE_DIR, user.username);
     if (!existsSync(userDir)) return Response.json([]);

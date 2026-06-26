@@ -3,6 +3,32 @@ import { join, resolve } from "node:path";
 import { BASE_DIR, PYTHON_VERSION, JUPYTERLAB_VERSION, SYNC_SIZE_THRESHOLD, SYNC_FILE_THRESHOLD } from "./config";
 import { getUserByUsername, updateGpuInitStatus, getGpuConfig } from "./db";
 
+// --- Input validators (prevent shell injection in SSH/rsync commands) ---
+
+export function validateGpuUsername(username: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+    throw new Error(`Invalid username: ${username}`);
+  }
+}
+
+export function validateSshUser(user: string): void {
+  if (!user || !/^[a-zA-Z0-9_-]+$/.test(user)) {
+    throw new Error(`Invalid SSH user: ${user}`);
+  }
+}
+
+export function validateSshHost(host: string): void {
+  if (!host || !/^[a-zA-Z0-9_.-]+$/.test(host)) {
+    throw new Error(`Invalid SSH host: ${host}`);
+  }
+}
+
+export function validateRemoteBaseDir(dir: string): void {
+  if (!dir || !/^\/[a-zA-Z0-9_/.-]+$/.test(dir) || dir.includes("..")) {
+    throw new Error(`Invalid remote_base_dir: ${dir}`);
+  }
+}
+
 export const SYNC_EXCLUDES = [
   "*venv*",
   "__pycache__",
@@ -23,6 +49,8 @@ async function remoteDirExists(
   path: string
 ): Promise<boolean> {
   try {
+    validateSshUser(sshUser);
+    validateSshHost(sshHost);
     const proc = Bun.spawn([
       "ssh", "-p", String(sshPort), "-i", sshKeyPath,
       "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
@@ -53,6 +81,8 @@ async function getRemoteFileCount(
   path: string
 ): Promise<number> {
   try {
+    validateSshUser(sshUser);
+    validateSshHost(sshHost);
     const proc = Bun.spawn([
       "ssh", "-p", String(sshPort), "-i", sshKeyPath,
       "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
@@ -149,6 +179,8 @@ async function getRemoteDirSize(
   path: string
 ): Promise<number> {
   try {
+    validateSshUser(sshUser);
+    validateSshHost(sshHost);
     const proc = Bun.spawn([
       "ssh", "-p", String(sshPort), "-i", sshKeyPath,
       "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
@@ -169,6 +201,12 @@ export async function testGpuSsh(
   keyPath: string,
   sshUser: string
 ): Promise<[boolean, string]> {
+  try {
+    if (sshHost) validateSshHost(sshHost);
+    if (sshUser) validateSshUser(sshUser);
+  } catch (e: any) {
+    return [false, e.message];
+  }
   if (!sshHost || !keyPath || !existsSync(keyPath)) {
     return [false, "GPU SSH not configured or key not found"];
   }
@@ -201,6 +239,12 @@ export async function testGpuSsh(
 }
 
 export async function stopGpuSession(username: string): Promise<[boolean, string]> {
+  try {
+    validateGpuUsername(username);
+  } catch (e: any) {
+    return [false, e.message];
+  }
+
   const user = getUserByUsername(username);
   if (!user) return [false, `User ${username} not found`];
 
@@ -212,6 +256,8 @@ export async function stopGpuSession(username: string): Promise<[boolean, string
   }
 
   try {
+    validateSshHost(sshHost);
+    validateSshUser(gpuConf.ssh_user);
     const proc = Bun.spawn([
       "ssh", "-p", String(sshPort),
       "-i", gpuConf.ssh_key_path,
@@ -254,6 +300,12 @@ export function gpuInitStream(
   keyPath: string, sshUser: string, token: string, endpoint: string,
   remoteBaseDir: string
 ): ReadableStream<string> {
+  // Validate all shell-interpolated inputs eagerly before stream starts
+  validateGpuUsername(username);
+  validateSshHost(host);
+  validateSshUser(sshUser);
+  validateRemoteBaseDir(remoteBaseDir);
+
   const logDir = join(BASE_DIR, ".gpu_logs");
   mkdirSync(logDir, { recursive: true });
   const logPath = join(logDir, `${username}-${logTimestamp()}-gpu.log`);
@@ -276,7 +328,7 @@ export function gpuInitStream(
         if (endpoint !== "" && !isValidGpuEndpoint(endpoint)) {
           throw new Error("Invalid GPU endpoint structure or dangerous characters detected");
         }
-        updateGpuInitStatus(username, "running");
+        // Status already set to 'running' atomically by caller (index.ts) before stream starts
         emit("Starting GPU initialization...");
 
         const [ok, sshMsg] = await testGpuSsh(host, port, keyPath, sshUser);
@@ -360,6 +412,9 @@ export function rsyncFromGpuStream(username: string, subpath: string = ""): Read
 }
 
 function _rsyncStream(username: string, subpath: string, direction: "to" | "from"): ReadableStream<string> {
+  // Validate username before using in log path and remote commands
+  validateGpuUsername(username);
+
   const logDir = join(BASE_DIR, ".rsync_logs");
   mkdirSync(logDir, { recursive: true });
   const suffix = direction === "to" ? "rsync-to" : "rsync-from";
@@ -434,6 +489,15 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
 
         if (!sshHost || !gpuConf.ssh_key_path || !existsSync(gpuConf.ssh_key_path)) {
           emit("Error: GPU SSH not configured");
+          return;
+        }
+
+        try {
+          validateSshHost(sshHost);
+          validateSshUser(gpuConf.ssh_user);
+          validateRemoteBaseDir(gpuConf.remote_base_dir);
+        } catch (e: any) {
+          emit(`Error: ${e.message}`);
           return;
         }
 
@@ -730,11 +794,11 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
               activeProc = null;
             }
 
-            // 3. Extract locally
+            // 3. Extract locally (--no-absolute-names prevents a compromised GPU writing outside BASE_DIR)
             emit("Extracting files locally...");
             const extractCmd = [
               "bash", "-c",
-              `zstd -d -T0 -c ${localTempArchive} | tar -xf - -C ${BASE_DIR}`
+              `zstd -d -T0 -c ${localTempArchive} | tar --no-absolute-names -xf - -C ${BASE_DIR}`
             ];
             const extractExit = await runCmd(extractCmd, "Extracting files locally");
             if (extractExit !== 0) {
@@ -777,6 +841,11 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
 }
 
 export function getLastGpuLog(username: string): string {
+  try {
+    validateGpuUsername(username);
+  } catch (e: any) {
+    return `Error: ${e.message}`;
+  }
   const logDir = join(BASE_DIR, ".gpu_logs");
   if (!existsSync(logDir)) return "No logs found.";
 
