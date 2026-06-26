@@ -27,7 +27,7 @@
         <div style="margin-bottom: 1.5rem;">
             <!-- Session Password/Token Badge -->
             <div style="margin-bottom: 1rem; padding: 0.75rem; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 6px;">
-                <span style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Session Password / Token:</span>
+                <span style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Local Session Password / Token (JupyterLab &amp; local Code Server only):</span>
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <code style="font-size: 0.95rem; color: var(--accent-color); font-weight: bold; letter-spacing: 0.05em;">{{ user.token }}</code>
                     <button @click="navigator.clipboard.writeText('{{ user.token }}').then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Token copied!', type: 'success' } })))" class="copy-btn" title="Copy password/token" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 0.2rem;">
@@ -143,7 +143,7 @@
             {% if user.gpu_init_status == 'ready' %}
             <!-- GPU Session Password -->
             <div style="margin-bottom: 0.75rem; padding: 0.6rem 0.75rem; background: rgba(124, 58, 237, 0.1); border: 1px solid rgba(124, 58, 237, 0.3); border-radius: 6px;">
-                <span style="font-size: 0.75rem; color: #a78bfa; display: block; margin-bottom: 0.2rem;">GPU Session Password (for Code Server &amp; JupyterLab):</span>
+                <span style="font-size: 0.75rem; color: #a78bfa; display: block; margin-bottom: 0.2rem;">🔑 GPU Session Password — use this to log into GPU Code Server &amp; GPU JupyterLab:</span>
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
                     <code id="gpuTokenDisplay" style="font-size: 0.85rem; color: #c4b5fd; font-weight: bold; letter-spacing: 0.04em; word-break: break-all;">{{ gpu_token }}</code>
                     <button @click="navigator.clipboard.writeText('{{ gpu_token }}').then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'GPU password copied!', type: 'success' } })))" class="copy-btn" title="Copy GPU password" style="background: none; border: none; color: #a78bfa; cursor: pointer; padding: 0.2rem; flex-shrink: 0;">
@@ -162,10 +162,15 @@
                     Launch GPU JupyterLab
                 </a>
                 {% if gpu_code_server_url %}
-                <a href="{{ gpu_code_server_url }}" target="_blank" class="btn btn-outline" style="border-color: #7c3aed; color: #a78bfa; font-weight: 600; text-decoration: none; text-align: center; width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-                    <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/coder.svg" alt="Code Server" style="width: 18px; height: 18px;">
-                    Launch GPU Code Server
-                </a>
+                <div style="display: flex; gap: 0.5rem; align-items: stretch; width: 100%;">
+                    <a href="{{ gpu_code_server_url }}" target="_blank" class="btn btn-outline" style="border-color: #7c3aed; color: #a78bfa; font-weight: 600; text-decoration: none; text-align: center; flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                        <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/coder.svg" alt="Code Server" style="width: 18px; height: 18px;">
+                        Launch GPU Code Server
+                    </a>
+                    <button @click="navigator.clipboard.writeText('{{ gpu_token }}').then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'GPU password copied — paste it when Code Server asks for a password', type: 'success' } })))" class="btn btn-outline" title="Copy GPU password for Code Server login" style="border-color: #7c3aed; color: #a78bfa; padding: 0 0.6rem; flex-shrink: 0;">
+                        🔑
+                    </button>
+                </div>
                 {% endif %}
                 {% if gpu_streamlit_url %}
                 <a href="{{ gpu_streamlit_url }}" target="_blank" class="btn btn-outline" style="border-color: #f97316; color: #fb923c; font-weight: 600; text-decoration: none; text-align: center; width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
