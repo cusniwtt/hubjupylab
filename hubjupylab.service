@@ -5,11 +5,22 @@ After=network.target
 [Service]
 User=hubjupylab
 WorkingDirectory=/home/hubjupylab/hubjupylab
+
+# Load .env file — set SECRET_KEY, ADMIN_PASS, BASE_DIR, HOST_IP, NODE_ENV, etc.
+EnvironmentFile=/home/hubjupylab/hubjupylab/.env
+
+Environment=PATH=/home/hubjupylab/.bun/bin:/home/hubjupylab/.local/bin:/usr/bin:/usr/local/bin
+# %U expands to the UID of User= above (systemd ≥240); no hardcoded UID needed
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
 ExecStart=/home/hubjupylab/.bun/bin/bun run src/index.ts
 Restart=always
 RestartSec=5
-Environment=PATH=/home/hubjupylab/.bun/bin:/home/hubjupylab/.local/bin:/usr/bin:/usr/local/bin
-Environment=XDG_RUNTIME_DIR=/run/user/1003
+
+# Log to journald (view with: journalctl -u hubjupylab -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hubjupylab
 
 [Install]
 WantedBy=multi-user.target
