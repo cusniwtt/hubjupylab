@@ -65,16 +65,16 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 ## Technical Details
 
 - **WSL Local Development**: Configured to bind on `127.0.0.1` inside WSL environment to support local Windows browser access.
-- **Starlette TemplateResponse**: Position-independent keyword call style (`request=request, name=name, context=context`) prevents signature exceptions.
+- **Stack**: TypeScript, Bun runtime, Elysia JS web framework, Nunjucks templates, bun:sqlite (not Python/Starlette — README/old notes were from earlier prototype).
 - **Nunjucks Development Caching**: Set `noCache: true` on Nunjucks configuration to enable immediate template updates without server restarts.
 
 ## Verification
-Scripts available in [/scratch](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch):
-- [verify_hub.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_hub.py): Standard verification of spawner, db, and user flows.
-- [verify_admin_controls.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_admin_controls.py): Verification of admin routes.
-- [verify_gpu.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_gpu.py): Verification of GPU config assignment and rsync failures.
-- [verify_htmx_user_controls.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_htmx_user_controls.py): Verification of user dashboard HTMX endpoints.
-- [verify_htmx_admin_controls.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_htmx_admin_controls.py): Verification of admin dashboard HTMX endpoints.
-- [verify_list_dirs.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_list_dirs.py): Verification of user directory listing for rsync.
-- [verify_status_polling.py](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_status_polling.py): Verification of status polling endpoints and OOB properties.
-- [verify_reset_password.ts](file:///Users/cusniwtt/Developer/Repository/hubjupylab/scratch/verify_reset_password.ts): End-to-end integration test verifying admin password resets, database flag setting, force redirects to `/change-password`, and password change updates.
+Scripts available in [/scratch](file:///home/hubjupylab/hubjupylab/scratch):
+- [verify_hub.py](file:///home/hubjupylab/hubjupylab/scratch/verify_hub.py): Standard verification of spawner, db, and user flows.
+- [verify_admin_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_admin_controls.py): Verification of admin routes.
+- [verify_gpu.py](file:///home/hubjupylab/hubjupylab/scratch/verify_gpu.py): Verification of GPU config assignment and rsync failures.
+- [verify_htmx_user_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_htmx_user_controls.py): Verification of user dashboard HTMX endpoints.
+- [verify_htmx_admin_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_htmx_admin_controls.py): Verification of admin dashboard HTMX endpoints.
+- [verify_list_dirs.py](file:///home/hubjupylab/hubjupylab/scratch/verify_list_dirs.py): Verification of user directory listing for rsync.
+- [verify_status_polling.py](file:///home/hubjupylab/hubjupylab/scratch/verify_status_polling.py): Verification of status polling endpoints and OOB properties.
+- [verify_reset_password.ts](file:///home/hubjupylab/hubjupylab/scratch/verify_reset_password.ts): End-to-end integration test verifying admin password resets, database flag setting, force redirects to `/change-password`, and password change updates.

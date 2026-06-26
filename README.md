@@ -69,50 +69,47 @@ bun run src/index.ts
 Then access the dashboard at `http://<host-ip>:8080`.
 
 ### Production (Systemd)
-To configure HubJupyLab to run on system startup:
 
-1. Copy the systemd service file to `/etc/systemd/system/`:
+**Quick install** (recommended):
+```bash
+sudo bash scripts/install.sh
+```
+This handles all steps below automatically: copies the service file, sets ownership, enables linger, reloads systemd, and starts the service.
+
+**Manual install**:
+
+1. Configure `.env` (required — the service will not load defaults without it):
+   ```bash
+   cp env.template .env
+   # Edit .env: set SECRET_KEY, ADMIN_PASS, HOST_IP, NODE_ENV=production, etc.
+   ```
+2. Copy the service file:
    ```bash
    sudo cp hubjupylab.service /etc/systemd/system/
    ```
-2. Set correct directory permissions:
+3. Set ownership:
    ```bash
    sudo chown -R hubjupylab:hubjupylab /home/hubjupylab/hubjupylab /home/hubjupylab/hubjupylab.db*
    ```
-3. Reload systemd daemon:
-   ```bash
-   sudo systemctl daemon-reload
-   ```
-4. Enable and start the service:
-   ```bash
-   sudo systemctl enable --now hubjupylab
-   ```
-4. Check status:
-   ```bash
-   sudo systemctl status hubjupylab
-   ```
-
-### Systemd Linger (Crucial for tmux persistence)
-
-To prevent systemd from killing user tmux sessions when the `hubjupylab` service restarts:
-
-1. **Enable user linger** for the `hubjupylab` user:
+4. Enable systemd linger (keeps tmux sessions alive across service restarts):
    ```bash
    sudo loginctl enable-linger hubjupylab
    ```
-   *This ensures a systemd user manager instance runs continuously for the user even when logged out.*
-
-2. **Configure Service Environment**:
-   Ensure the systemd service file `/etc/systemd/system/hubjupylab.service` has the `XDG_RUNTIME_DIR` set under the `[Service]` section:
-   ```ini
-   Environment=XDG_RUNTIME_DIR=/run/user/1003
-   ```
-   *(Replace `1003` with the actual UID of the `hubjupylab` user, which can be found via `id -u hubjupylab`)*
-
-3. **Reload and Restart**:
+5. Reload, enable, and start:
    ```bash
    sudo systemctl daemon-reload
+   sudo systemctl enable --now hubjupylab
    ```
+6. Check status and logs:
+   ```bash
+   sudo systemctl status hubjupylab
+   sudo journalctl -u hubjupylab -f
+   ```
+
+**Notes:**
+- `XDG_RUNTIME_DIR` uses the `%U` systemd specifier (expands to the UID of `User=hubjupylab`) — no hardcoded UID needed.
+- The service loads `.env` via `EnvironmentFile=` — all config lives in one place.
+- `NODE_ENV=production` in `.env` enables startup guards: the service refuses to start if `SECRET_KEY` or `ADMIN_PASS` are still at default values.
 
 ---
 
