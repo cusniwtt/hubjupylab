@@ -8,9 +8,14 @@ env/
 venv/
 ENV/
 
+# Scratch / temp
+scratch/__pycache__/
+
 # Databases
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 
 # Local Environment Configs
 .env
