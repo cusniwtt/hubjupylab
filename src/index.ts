@@ -94,7 +94,7 @@ async function getEnrichedUsers(request: Request): Promise<Record<string, any>[]
   for (const u of users) {
     const isRunning = await spawner.isSessionRunning(u.username);
     const jupyterUrl = isRunning && u.token ? buildJupyterUrl(hostIp, u.port!, u.token) : "";
-    const codeServerUrl = isRunning && u.token ? buildCodeServerUrl(hostIp, u.port! + config.CODE_SERVER_PORT_OFFSET) : "";
+    const codeServerUrl = isRunning ? buildCodeServerUrl(hostIp, u.port! + config.CODE_SERVER_PORT_OFFSET) : "";
     enriched.push({ ...u, is_running: isRunning, jupyter_url: jupyterUrl, code_server_url: codeServerUrl });
   }
   return enriched;
@@ -106,7 +106,7 @@ async function enrichUser(username: string, request: Request): Promise<Record<st
   const hostIp = resolveHostIp(request);
   const isRunning = await spawner.isSessionRunning(username);
   const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
-  const codeServerUrl = isRunning && user.token ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
+  const codeServerUrl = isRunning ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
   return { ...user, is_running: isRunning, jupyter_url: jupyterUrl, code_server_url: codeServerUrl };
 }
 
@@ -185,12 +185,13 @@ const app = new Elysia()
     const hostIp = resolveHostIp(request);
     const isRunning = await spawner.isSessionRunning(user.username);
     const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
-    const codeServerUrl = isRunning && user.token ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
+    const codeServerUrl = isRunning ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
 
     return new Response(render("dashboard.html", {
       user, is_running: isRunning, user_port: user.port,
       jupyter_url: jupyterUrl, code_server_url: codeServerUrl,
       error: query.error ?? null, success: query.success ?? null,
+      ssh_host: hostIp, ssh_port: config.SSH_PORT,
       ...buildGpuCtx(user)
     }), { headers: { "Content-Type": "text/html" } });
   })
@@ -244,7 +245,7 @@ const app = new Elysia()
       if (isHtmx) {
         const isRunning = await spawner.isSessionRunning(username);
         const jurl = isRunning && user.token ? buildJupyterUrl(hostIp, port, user.token) : "";
-        const csurl = isRunning && user.token ? buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET) : "";
+        const csurl = isRunning ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
         return new Response(render("partials/_dashboard_status.html", {
           is_running: isRunning, user_port: port, jupyter_url: jurl,
           code_server_url: csurl, user,
@@ -294,7 +295,7 @@ const app = new Elysia()
       if (isHtmx) {
         const isRunning = await spawner.isSessionRunning(username);
         const jurl = isRunning && user.token ? buildJupyterUrl(hostIp, port, user.token) : "";
-        const csurl = isRunning && user.token ? buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET) : "";
+        const csurl = isRunning ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
         return new Response(render("partials/_dashboard_status.html", {
           is_running: isRunning, user_port: port, jupyter_url: jurl,
           code_server_url: csurl, user,
@@ -381,10 +382,11 @@ const app = new Elysia()
     const hostIp = resolveHostIp(request);
     const isRunning = await spawner.isSessionRunning(user.username);
     const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
-    const codeServerUrl = isRunning && user.token ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
+    const codeServerUrl = isRunning ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
     return new Response(render("partials/_dashboard_status.html", {
       is_running: isRunning, user_port: user.port,
       jupyter_url: jupyterUrl, code_server_url: codeServerUrl, user,
+      ssh_host: hostIp, ssh_port: config.SSH_PORT,
       ...buildGpuCtx(user)
     }), { headers: { "Content-Type": "text/html" } });
   })
@@ -461,13 +463,23 @@ const app = new Elysia()
       return redirect("/admin?error=No+available+ports+left+(limit+9)", 303);
     }
 
-    const created = await db.createUser(userTrim, password ?? "", "user", port);
+    // Generate password server-side so admin always gets a known, displayable credential
+    const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let tempPass = "";
+    for (let i = 0; i < 12; i++) {
+      tempPass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    const created = await db.createUser(userTrim, tempPass, "user", port);
     if (!created) {
       if (isHtmx) return new Response("", { status: 422, headers: {
         "HX-Trigger": JSON.stringify({ showToast: { message: "Username already exists", type: "error" } })
       }});
       return redirect("/admin?error=Username+already+exists", 303);
     }
+
+    // Force password change on first login
+    await db.changePassword(userTrim, tempPass, true);
 
     const envOk = await spawner.setupUserEnv(userTrim);
     if (!envOk) {
@@ -483,11 +495,15 @@ const app = new Elysia()
       return new Response(render("partials/_admin_user_table_body.html", { users: enriched }), {
         headers: {
           "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({ showToast: { message: `Created user ${userTrim}`, type: "success" }, userListUpdated: null })
+          "HX-Trigger": JSON.stringify({
+            showToast: { message: `Created user ${userTrim}`, type: "success" },
+            userListUpdated: null,
+            "password-reset": { username: userTrim, tempPass }
+          })
         }
       });
     }
-    return redirect(`/admin?success=Created+user+${userTrim}`, 303);
+    return redirect(`/admin?success=Created+user+${userTrim}.+Temp+password:+${tempPass}`, 303);
   })
 
   .post("/admin/users/:username", async ({ params, body, cookie, redirect, headers }) => {

@@ -6,6 +6,7 @@ export const ADMIN_PASS = Bun.env.ADMIN_PASS ?? "admin";
 export const SECRET_KEY = Bun.env.SECRET_KEY ?? "dev-secret-key-please-change-in-prod";
 export const HUB_PORT = parseInt(Bun.env.HUB_PORT ?? "8080", 10);
 export const HOST_IP = Bun.env.HOST_IP?.trim() ?? "";
+export const SSH_PORT = parseInt(Bun.env.SSH_PORT ?? "22", 10);
 export const BASE_DIR = Bun.env.BASE_DIR ?? "/home/hubjupylab";
 export const JUPYTERLAB_VERSION = Bun.env.JUPYTERLAB_VERSION ?? "4.4.1";
 export const PYTHON_VERSION = Bun.env.PYTHON_VERSION ?? "3.14";

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BASE_DIR, PYTHON_VERSION, JUPYTERLAB_VERSION, JUPYTER_PORT_START, JUPYTER_PORT_END, CODE_SERVER_PORT_OFFSET } from "./config";
 import { listUsers, updateToken, getUsedPorts } from "./db";
@@ -25,6 +25,22 @@ export async function setupUserEnv(username: string): Promise<boolean> {
   mkdirSync(userDir, { recursive: true });
 
   const venvDir = join(userDir, ".venv");
+
+  // Check if existing venv has a working python binary (guards against stale venvs
+  // from old TLJH installations where symlinks point to deleted paths).
+  if (existsSync(venvDir)) {
+    const pythonBin = join(venvDir, "bin", "python");
+    const checkProc = Bun.spawn([pythonBin, "--version"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const checkExit = await checkProc.exited;
+    if (checkExit !== 0) {
+      console.warn(`Broken venv detected for ${username} (python check failed) — removing and recreating`);
+      rmSync(venvDir, { recursive: true, force: true });
+    }
+  }
+
   if (!existsSync(venvDir)) {
     // Create venv
     const venvProc = Bun.spawn(["uv", "venv", "--python", PYTHON_VERSION, venvDir], {
@@ -41,7 +57,7 @@ export async function setupUserEnv(username: string): Promise<boolean> {
     // Install jupyterlab
     const pythonBin = join(venvDir, "bin", "python");
     const installProc = Bun.spawn(
-      ["uv", "pip", "install", `jupyterlab==${JUPYTERLAB_VERSION}`, "--python", pythonBin],
+      ["uv", "pip", "install", `jupyterlab==${JUPYTERLAB_VERSION}`, "ipykernel", "--python", pythonBin],
       { stdout: "ignore", stderr: "pipe" }
     );
     const stderrTextInstall = await new Response(installProc.stderr).text();
@@ -88,9 +104,15 @@ export async function spawnSession(username: string, port: number, token: string
   const codeServerPort = port + CODE_SERVER_PORT_OFFSET;
 
   const jupyterCmd = `cd ${userDir} && exec ${jupyterBin} lab --ip=0.0.0.0 --port=${port} --IdentityProvider.token=${token} --no-browser --notebook-dir=${userDir}`;
-  const codeServerCmd = `PASSWORD=${token} exec code-server --bind-addr=0.0.0.0:${codeServerPort} --auth=password --disable-telemetry ${userDir}`;
 
-  // Start tmux with jupyter window named 'jupyter'
+  // Find the vscode server node binary (commit hash changes per CLI version)
+  const serveWebBase = join(process.env.HOME!, ".vscode", "cli", "serve-web");
+  const commitDir = readdirSync(serveWebBase).find(d => d !== "lru.json") ?? "";
+  const vsNode = join(serveWebBase, commitDir, "node");
+  const vsMain = join(serveWebBase, commitDir, "out", "server-main.js");
+  const codeServerCmd = `exec ${vsNode} ${vsMain} --host=0.0.0.0 --port=${codeServerPort} --without-connection-token --server-data-dir=${userDir}/.vscode-server --default-folder=${userDir} --telemetry-level=off --accept-server-license-terms`;
+
+  // Start tmux with jupyter in window 0
   const proc = Bun.spawn(["systemd-run", "--user", "--scope", "tmux", "new-session", "-d", "-s", sessionName, "-n", "jupyter", jupyterCmd], {
     stdout: "ignore",
     stderr: "pipe",
@@ -102,16 +124,15 @@ export async function spawnSession(username: string, port: number, token: string
     return false;
   }
 
-  // Create new window for code-server
-  const winProc = Bun.spawn(["tmux", "new-window", "-t", `${sessionName}:1`, "-n", "code-server", codeServerCmd], {
+  // Spawn VS Code serve-web in window 1
+  const winProc = Bun.spawn(["tmux", "new-window", "-t", `${sessionName}:1`, "-n", "vscode", codeServerCmd], {
     stdout: "ignore",
     stderr: "pipe",
   });
   const winStderr = await new Response(winProc.stderr).text();
   const winExit = await winProc.exited;
   if (winExit !== 0) {
-    console.error(`Error spawning code-server window for ${username}: ${winStderr}`);
-    // Kill the orphaned jupyter session so state stays consistent
+    console.error(`Error spawning VS Code window for ${username}: ${winStderr}`);
     const killProc = Bun.spawn(["tmux", "kill-session", "-t", sessionName], {
       stdout: "ignore",
       stderr: "ignore",
