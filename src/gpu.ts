@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BASE_DIR, PYTHON_VERSION, JUPYTERLAB_VERSION, SYNC_SIZE_THRESHOLD, SYNC_FILE_THRESHOLD } from "./config";
-import { getUserByUsername, updateGpuInitStatus, getGpuConfig } from "./db";
+import { getUserByUsername, updateGpuInitStatus, updateGpuCodeServerEndpoint, getGpuConfig } from "./db";
 
 // --- Input validators (prevent shell injection in SSH/rsync commands) ---
 
@@ -38,7 +38,8 @@ export const SYNC_EXCLUDES = [
   ".conda",
   ".local",
   "nohup.out",
-  ".vscode-server"
+  ".vscode-server",
+  ".code-server"
 ];
 
 async function remoteDirExists(
@@ -372,17 +373,25 @@ export function gpuInitStream(
         await runStep("mkdir-workspace", `mkdir -p ${remoteBaseDir}/${username}`);
         await runStep("create-venv", `$HOME/.local/bin/uv venv --clear --python ${PYTHON_VERSION} ${remoteBaseDir}/${username}/.venv`);
         await runStep("install-jupyter", `$HOME/.local/bin/uv pip install jupyterlab==${JUPYTERLAB_VERSION} ipykernel --python ${remoteBaseDir}/${username}/.venv/bin/python`);
-        await runStep("install-vscode-cli", "curl -Lk 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64' --output /tmp/vscode_cli.tar.gz && tar -xf /tmp/vscode_cli.tar.gz -C /usr/local/bin/ && chmod +x /usr/local/bin/code");
+        await runStep("install-code-server", "curl -fsSL https://code-server.dev/install.sh | sh");
         await runStep("kill-existing-tmux", `tmux kill-session -t gpu_${username} 2>/dev/null || true`);
 
         const jupyterCmd = `cd ${remoteBaseDir}/${username} && exec ${remoteBaseDir}/${username}/.venv/bin/jupyter lab --no-browser --port=8888 --ServerApp.allow_origin='${endpoint}' --ip=0.0.0.0 --allow-root --IdentityProvider.token=${token} --notebook-dir=${remoteBaseDir}/${username}`;
         await runStep("spawn-jupyter", `tmux new-session -d -s gpu_${username} -n jupyter "${jupyterCmd}"`);
 
-        const codeServerCmd = `COMMITDIR=$(ls $HOME/.vscode/cli/serve-web/ 2>/dev/null | grep -v lru | head -1) && exec $HOME/.vscode/cli/serve-web/$COMMITDIR/node $HOME/.vscode/cli/serve-web/$COMMITDIR/out/server-main.js --host=0.0.0.0 --port=8889 --without-connection-token --server-data-dir=${remoteBaseDir}/${username}/.vscode-server --default-folder=${remoteBaseDir}/${username} --telemetry-level=off --accept-server-license-terms`;
+        const codeServerCmd = `PASSWORD=${token} code-server --bind-addr 0.0.0.0:8889 --auth password --disable-telemetry`;
         await runStep("spawn-vscode", `tmux new-window -t gpu_${username}:1 -n vscode "${codeServerCmd}"`);
         await runStep("verify-tmux", `tmux has-session -t gpu_${username}`);
 
         updateGpuInitStatus(username, "ready");
+        // Auto-derive code-server URL from JupyterLab endpoint (replace port 8888 with 8889 in proxy URL)
+        if (endpoint) {
+          const codeServerUrl = endpoint.replace(/-8888(\.|\/|$)/, "-8889$1");
+          if (codeServerUrl !== endpoint) {
+            updateGpuCodeServerEndpoint(username, codeServerUrl);
+            emit(`VS Code endpoint auto-set to: ${codeServerUrl}`);
+          }
+        }
         emit("Initialization SUCCESSFUL! GPU JupyterLab and VS Code are now running.");
       } catch (e: any) {
         emit(`Error: ${e.message}`);

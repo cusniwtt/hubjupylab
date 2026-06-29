@@ -200,6 +200,10 @@ export function updateGpuInitStatus(username: string, status: string | null): vo
   db.query("UPDATE users SET gpu_init_status = ? WHERE username = ?").run(status, username);
 }
 
+export function updateGpuCodeServerEndpoint(username: string, url: string): void {
+  db.query("UPDATE users SET gpu_code_server_endpoint = ? WHERE username = ?").run(url, username);
+}
+
 /**
  * Atomically set gpu_init_status = 'running' only if current status is NOT 'running'.
  * Returns true if the update succeeded (i.e., we won the race), false if already running.

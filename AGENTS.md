@@ -45,7 +45,9 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 - **Concurrent Spawning**: Runs `code-server` alongside `JupyterLab` in the same tmux session (`hub_{username}` locally and `gpu_{username}` remotely) in separate windows.
 - **Port Mapping**: Local code-server port is dynamically set at `JupyterLab port + 100`; remote GPU VM runs code-server on port `8889`.
 - **Credential Sharing**: Reuses JupyterLab session token as code-server authentication password.
-- **Exclusion Filters**: Added `.code-server` configuration to `SYNC_EXCLUDES` to prevent synchronization overhead.
+- **Exclusion Filters**: Added `.code-server` to `SYNC_EXCLUDES` to prevent synchronization overhead.
+- **GPU code-server**: Uses [coder/code-server](https://github.com/coder/code-server) (NOT Microsoft's `code serve-web`) installed via `curl -fsSL https://code-server.dev/install.sh | sh`. Runs on port 8889 with `--auth password` using the session token. Works correctly behind RunPod's Cloudflare HTTP proxy (WebSocket support, no port-exposure quirks). URL auto-derived from JupyterLab endpoint by replacing `-8888.` with `-8889.` in the proxy hostname.
+- **Local code-server**: Uses Microsoft's VS Code CLI serve-web internals via spawner.ts (unchanged — not exposed through a reverse proxy, runs on localhost only).
 
 ### 7. UI Dashboard Layout Refinements
 - **Badge Indicator**: Added Session Password/Token display card above JupyterLab launcher button.

@@ -167,7 +167,7 @@
                         <img src="https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/coder.svg" alt="Code Server" style="width: 18px; height: 18px;">
                         Launch GPU Code Server
                     </a>
-                    <button @click="navigator.clipboard.writeText('{{ gpu_token }}').then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'GPU password copied — paste it when Code Server asks for a password', type: 'success' } })))" class="btn btn-outline" title="Copy GPU password for Code Server login" style="border-color: #7c3aed; color: #a78bfa; padding: 0 0.6rem; flex-shrink: 0;">
+                    <button @click="navigator.clipboard.writeText('{{ gpu_token }}').then(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Password copied — paste it into the Code Server login prompt', type: 'success' } })))" class="btn btn-outline" title="Copy Code Server password" style="border-color: #7c3aed; color: #a78bfa; padding: 0 0.6rem; flex-shrink: 0;">
                         🔑
                     </button>
                 </div>
