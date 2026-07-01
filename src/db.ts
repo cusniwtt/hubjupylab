@@ -20,6 +20,7 @@ export interface User {
   gpu_token: string | null;
   gpu_ssh_host: string | null;
   gpu_ssh_port: number | null;
+  gpu_ssh_user: string | null;
   gpu_init_status: string | null;
   must_change_password: number;
 }
@@ -31,6 +32,7 @@ export interface GpuConfig {
   ssh_user: string;
   ssh_key_path: string;
   remote_base_dir: string;
+  additional_public_keys: string;
 }
 
 export async function initDb(): Promise<void> {
@@ -55,6 +57,7 @@ export async function initDb(): Promise<void> {
     "gpu_token TEXT",
     "gpu_ssh_host TEXT",
     "gpu_ssh_port INTEGER",
+    "gpu_ssh_user TEXT DEFAULT 'root'",
     "gpu_init_status TEXT",
   ];
   for (const col of gpuCols) {
@@ -79,10 +82,14 @@ export async function initDb(): Promise<void> {
       ssh_port INTEGER NOT NULL DEFAULT 22,
       ssh_user TEXT NOT NULL DEFAULT 'root',
       ssh_key_path TEXT NOT NULL DEFAULT '/home/hubjupylab/.ssh/id_ed25519',
-      remote_base_dir TEXT NOT NULL DEFAULT '/workspace'
+      remote_base_dir TEXT NOT NULL DEFAULT '/workspace',
+      additional_public_keys TEXT NOT NULL DEFAULT ''
     )
   `);
-  db.exec("INSERT OR IGNORE INTO gpu_config (id, ssh_user, ssh_key_path, remote_base_dir) VALUES (1, 'root', '/home/hubjupylab/.ssh/id_ed25519', '/workspace')");
+  try {
+    db.exec("ALTER TABLE gpu_config ADD COLUMN additional_public_keys TEXT NOT NULL DEFAULT ''");
+  } catch (_) {}
+  db.exec("INSERT OR IGNORE INTO gpu_config (id, ssh_user, ssh_key_path, remote_base_dir, additional_public_keys) VALUES (1, 'root', '/home/hubjupylab/.ssh/id_ed25519', '/workspace', '')");
 
   // Seed admin if none exists
   const adminRow = db.query("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1").get();
@@ -149,6 +156,7 @@ export function getGpuConfig(): GpuConfig {
     ssh_user: "root",
     ssh_key_path: "",
     remote_base_dir: "/workspace",
+    additional_public_keys: "",
   };
 }
 
@@ -157,18 +165,20 @@ export function saveGpuConfig(
   ssh_port: number,
   ssh_user: string,
   ssh_key_path: string,
-  remote_base_dir: string
+  remote_base_dir: string,
+  additional_public_keys: string = ""
 ): void {
   db.query(`
-    INSERT INTO gpu_config (id, ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir)
-    VALUES (1, ?, ?, ?, ?, ?)
+    INSERT INTO gpu_config (id, ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir, additional_public_keys)
+    VALUES (1, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       ssh_host = excluded.ssh_host,
       ssh_port = excluded.ssh_port,
       ssh_user = excluded.ssh_user,
       ssh_key_path = excluded.ssh_key_path,
-      remote_base_dir = excluded.remote_base_dir
-  `).run(ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir);
+      remote_base_dir = excluded.remote_base_dir,
+      additional_public_keys = excluded.additional_public_keys
+  `).run(ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir, additional_public_keys);
 }
 
 export function assignGpu(
@@ -177,6 +187,7 @@ export function assignGpu(
   gpu_token: string,
   gpu_ssh_host: string,
   gpu_ssh_port: number,
+  gpu_ssh_user: string = "root",
   gpu_streamlit_endpoint: string = "",
   gpu_code_server_endpoint: string = ""
 ): void {
@@ -186,13 +197,13 @@ export function assignGpu(
     newStatus = user.gpu_init_status;
   }
   db.query(
-    "UPDATE users SET gpu_endpoint = ?, gpu_streamlit_endpoint = ?, gpu_code_server_endpoint = ?, gpu_token = ?, gpu_ssh_host = ?, gpu_ssh_port = ?, gpu_init_status = ? WHERE username = ?"
-  ).run(gpu_endpoint, gpu_streamlit_endpoint, gpu_code_server_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port, newStatus, username);
+    "UPDATE users SET gpu_endpoint = ?, gpu_streamlit_endpoint = ?, gpu_code_server_endpoint = ?, gpu_token = ?, gpu_ssh_host = ?, gpu_ssh_port = ?, gpu_ssh_user = ?, gpu_init_status = ? WHERE username = ?"
+  ).run(gpu_endpoint, gpu_streamlit_endpoint, gpu_code_server_endpoint, gpu_token, gpu_ssh_host, gpu_ssh_port, gpu_ssh_user, newStatus, username);
 }
 
 export function unassignGpu(username: string): void {
   db.query(
-    "UPDATE users SET gpu_endpoint = NULL, gpu_streamlit_endpoint = NULL, gpu_code_server_endpoint = NULL, gpu_token = NULL, gpu_ssh_host = NULL, gpu_ssh_port = NULL, gpu_init_status = NULL WHERE username = ?"
+    "UPDATE users SET gpu_endpoint = NULL, gpu_streamlit_endpoint = NULL, gpu_code_server_endpoint = NULL, gpu_token = NULL, gpu_ssh_host = NULL, gpu_ssh_port = NULL, gpu_ssh_user = NULL, gpu_init_status = NULL WHERE username = ?"
   ).run(username);
 }
 

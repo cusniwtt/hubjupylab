@@ -105,13 +105,6 @@ export async function spawnSession(username: string, port: number, token: string
 
   const jupyterCmd = `cd ${userDir} && exec ${jupyterBin} lab --ip=0.0.0.0 --port=${port} --IdentityProvider.token=${token} --no-browser --notebook-dir=${userDir}`;
 
-  // Find the vscode server node binary (commit hash changes per CLI version)
-  const serveWebBase = join(process.env.HOME!, ".vscode", "cli", "serve-web");
-  const commitDir = readdirSync(serveWebBase).find(d => d !== "lru.json") ?? "";
-  const vsNode = join(serveWebBase, commitDir, "node");
-  const vsMain = join(serveWebBase, commitDir, "out", "server-main.js");
-  const codeServerCmd = `exec ${vsNode} ${vsMain} --host=0.0.0.0 --port=${codeServerPort} --without-connection-token --server-data-dir=${userDir}/.vscode-server --default-folder=${userDir} --telemetry-level=off --accept-server-license-terms`;
-
   // Start tmux with jupyter in window 0
   const proc = Bun.spawn(["systemd-run", "--user", "--scope", "tmux", "new-session", "-d", "-s", sessionName, "-n", "jupyter", jupyterCmd], {
     stdout: "ignore",
@@ -124,21 +117,20 @@ export async function spawnSession(username: string, port: number, token: string
     return false;
   }
 
-  // Spawn VS Code serve-web in window 1
-  const winProc = Bun.spawn(["tmux", "new-window", "-t", `${sessionName}:1`, "-n", "vscode", codeServerCmd], {
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const winStderr = await new Response(winProc.stderr).text();
-  const winExit = await winProc.exited;
-  if (winExit !== 0) {
-    console.error(`Error spawning VS Code window for ${username}: ${winStderr}`);
-    const killProc = Bun.spawn(["tmux", "kill-session", "-t", sessionName], {
+  // Spawn local code-server in window 1
+  try {
+    const codeServerCmd = `PASSWORD=${token} code-server --bind-addr 127.0.0.1:${codeServerPort} --auth password --disable-telemetry --user-data-dir=${userDir}/.code-server`;
+    const winProc = Bun.spawn(["tmux", "new-window", "-t", `${sessionName}:1`, "-n", "vscode", "sh", "-c", codeServerCmd], {
       stdout: "ignore",
-      stderr: "ignore",
+      stderr: "pipe",
     });
-    await killProc.exited;
-    return false;
+    const winStderr = await new Response(winProc.stderr).text();
+    const winExit = await winProc.exited;
+    if (winExit !== 0) {
+      console.warn(`Warning: Failed to spawn local code-server window for ${username}: ${winStderr}`);
+    }
+  } catch (e: any) {
+    console.warn(`Warning: Local code-server could not be initialized: ${e.message}`);
   }
 
   return true;

@@ -140,261 +140,154 @@ await spawner.syncSessions();
 const app = new Elysia()
   .use(staticPlugin({ prefix: "/static", assets: "static" }))
 
-  // --- Auth Routes ---
-  .get("/", ({ cookie, query, redirect }) => {
+  // --- Auth & Profile APIs ---
+  .get("/api/me", ({ cookie }) => {
     const user = getCurrentUser(cookie);
-    if (user) {
-      return redirect(user.role === "admin" ? "/admin" : "/dashboard");
-    }
-    return new Response(render("login.html", {
-      user: null, error: query.error ?? null, success: query.success ?? null
-    }), { headers: { "Content-Type": "text/html" } });
+    if (!user) return Response.json({ authenticated: false }, { status: 401 });
+    return Response.json({
+      authenticated: true,
+      username: user.username,
+      role: user.role,
+      must_change_password: !!user.must_change_password
+    });
   })
 
-  .post("/login", async ({ body, set, redirect, request }) => {
+  .post("/api/login", async ({ body, set, request }) => {
     const { username, password } = body as { username?: string; password?: string };
     if (!username || !password) {
-      return redirect("/?error=Missing+credentials", 303);
+      return Response.json({ error: "Missing credentials" }, { status: 400 });
     }
     const user = db.getUserByUsername(username);
-    // Always run bcrypt to prevent username enumeration via timing
     const DUMMY_HASH = "$2b$10$invalidhashvaluethatnevermatchesXXXXXXXXXXXXXXXXXXXXX";
     const passwordOk = user
       ? await db.verifyPassword(password, user.password_hash)
       : (await db.verifyPassword(password, DUMMY_HASH), false);
     if (!user || !passwordOk) {
-      return redirect("/?error=Invalid+credentials", 303);
+      return Response.json({ error: "Invalid credentials" }, { status: 401 });
     }
     const signed = signCookie(username);
     set.headers["Set-Cookie"] = `hub_session=${signed}; ${sessionCookieFlags(request)}`;
-    return redirect(user.must_change_password ? "/change-password" : (user.role === "admin" ? "/admin" : "/dashboard"), 303);
+    return Response.json({
+      ok: true,
+      username: user.username,
+      role: user.role,
+      must_change_password: !!user.must_change_password
+    });
   })
 
-  .get("/logout", ({ set, redirect, request }) => {
+  .post("/api/logout", ({ set, request }) => {
     set.headers["Set-Cookie"] = `hub_session=; ${sessionCookieFlags(request)}; Max-Age=0`;
-    return redirect("/", 302);
+    return Response.json({ ok: true });
   })
 
-  // --- User Dashboard ---
-  .get("/dashboard", async ({ cookie, query, request, redirect }) => {
+  .post("/api/change-password", async ({ cookie, body }) => {
     const user = getCurrentUser(cookie);
-    if (!user) return redirect("/", 302);
-    if (user.role === "admin") return redirect("/admin", 302);
-    if (user.must_change_password) return redirect("/change-password", 302);
-
-    const hostIp = resolveHostIp(request);
-    const isRunning = await spawner.isSessionRunning(user.username);
-    const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
-    const codeServerUrl = isRunning ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
-
-    return new Response(render("dashboard.html", {
-      user, is_running: isRunning, user_port: user.port,
-      jupyter_url: jupyterUrl, code_server_url: codeServerUrl,
-      error: query.error ?? null, success: query.success ?? null,
-      ssh_host: hostIp, ssh_port: config.SSH_PORT,
-      ...buildGpuCtx(user)
-    }), { headers: { "Content-Type": "text/html" } });
-  })
-
-  // --- Change Password ---
-  .get("/change-password", ({ cookie, redirect, query }) => {
-    const user = getCurrentUser(cookie);
-    if (!user) return redirect("/", 302);
-    return new Response(render("change_password.html", {
-      user, error: query.error ?? null, success: query.success ?? null
-    }), { headers: { "Content-Type": "text/html" } });
-  })
-
-  .post("/change-password", async ({ cookie, body, redirect }) => {
-    const user = getCurrentUser(cookie);
-    if (!user) return redirect("/", 302);
+    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
     const { password, confirm_password } = body as { password?: string; confirm_password?: string };
     if (!password || !confirm_password) {
-      return redirect("/change-password?error=Missing+fields", 303);
+      return Response.json({ error: "Missing fields" }, { status: 400 });
     }
     if (password !== confirm_password) {
-      return redirect("/change-password?error=Passwords+do+not+match", 303);
+      return Response.json({ error: "Passwords do not match" }, { status: 400 });
     }
     if (password.length < 8) {
-      return redirect("/change-password?error=Password+must+be+at+least+8+characters", 303);
+      return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
     }
     await db.changePassword(user.username, password, false);
-    return redirect("/dashboard?success=Password+changed+successfully", 303);
+    return Response.json({ ok: true });
   })
 
   // --- User Session Controls ---
-  .post("/session/start", async ({ cookie, request, redirect, headers }) => {
+  .get("/api/session/status", async ({ cookie, request }) => {
     const user = getCurrentUser(cookie);
-    if (!user) return redirect("/", 302);
-    if (user.role === "admin") return redirect("/admin", 302);
-    if (user.must_change_password) {
-      if (headers["hx-request"] === "true") {
-        return new Response("", { headers: { "HX-Redirect": "/change-password" } });
-      }
-      return redirect("/change-password", 302);
-    }
-
-    const username = user.username;
-    const port = user.port!;
-    const hostIp = resolveHostIp(request);
-    const token = crypto.randomBytes(16).toString("base64url");
-    const isHtmx = headers["hx-request"] === "true";
-
-    const success = await spawner.spawnSession(username, port, token);
-    if (!success) {
-      if (isHtmx) {
-        const isRunning = await spawner.isSessionRunning(username);
-        const jurl = isRunning && user.token ? buildJupyterUrl(hostIp, port, user.token) : "";
-        const csurl = isRunning ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
-        return new Response(render("partials/_dashboard_status.html", {
-          is_running: isRunning, user_port: port, jupyter_url: jurl,
-          code_server_url: csurl, user,
-          ...buildGpuCtx(user)
-        }), { headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to start JupyterLab session", type: "error" } })
-        }});
-      }
-      return redirect("/dashboard?error=Failed+to+start+JupyterLab+session", 303);
-    }
-
-    db.updateToken(username, token);
-    user.token = token;
-    if (isHtmx) {
-      return new Response(render("partials/_dashboard_status.html", {
-        is_running: true, user_port: port,
-        jupyter_url: buildJupyterUrl(hostIp, port, token),
-        code_server_url: buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET),
-        user, ...buildGpuCtx(user)
-      }), { headers: {
-        "Content-Type": "text/html",
-        "HX-Trigger": JSON.stringify({ showToast: { message: "JupyterLab started", type: "success" } })
-      }});
-    }
-    return redirect("/dashboard?success=JupyterLab+started", 303);
-  })
-
-  .post("/session/stop", async ({ cookie, request, redirect, headers }) => {
-    const user = getCurrentUser(cookie);
-    if (!user) return redirect("/", 302);
-    if (user.role === "admin") return redirect("/admin", 302);
-    if (user.must_change_password) {
-      if (headers["hx-request"] === "true") {
-        return new Response("", { headers: { "HX-Redirect": "/change-password" } });
-      }
-      return redirect("/change-password", 302);
-    }
-
-    const username = user.username;
-    const port = user.port!;
-    const hostIp = resolveHostIp(request);
-    const isHtmx = headers["hx-request"] === "true";
-
-    const success = await spawner.stopSession(username);
-    if (!success) {
-      if (isHtmx) {
-        const isRunning = await spawner.isSessionRunning(username);
-        const jurl = isRunning && user.token ? buildJupyterUrl(hostIp, port, user.token) : "";
-        const csurl = isRunning ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
-        return new Response(render("partials/_dashboard_status.html", {
-          is_running: isRunning, user_port: port, jupyter_url: jurl,
-          code_server_url: csurl, user,
-          ...buildGpuCtx(user)
-        }), { headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to stop JupyterLab session", type: "error" } })
-        }});
-      }
-      return redirect("/dashboard?error=Failed+to+stop+JupyterLab+session", 303);
-    }
-
-    db.updateToken(username, null);
-    if (isHtmx) {
-      return new Response(render("partials/_dashboard_status.html", {
-        is_running: false, user_port: port, jupyter_url: "", code_server_url: "",
-        user, ...buildGpuCtx(user)
-      }), { headers: {
-        "Content-Type": "text/html",
-        "HX-Trigger": JSON.stringify({ showToast: { message: "JupyterLab stopped", type: "success" } })
-      }});
-    }
-    return redirect("/dashboard?success=JupyterLab+stopped", 303);
-  })
-
-  .post("/session/restart", async ({ cookie, request, redirect, headers }) => {
-    const user = getCurrentUser(cookie);
-    if (!user) return redirect("/", 302);
-    if (user.role === "admin") return redirect("/admin", 302);
-    if (user.must_change_password) {
-      if (headers["hx-request"] === "true") {
-        return new Response("", { headers: { "HX-Redirect": "/change-password" } });
-      }
-      return redirect("/change-password", 302);
-    }
-
-    const username = user.username;
-    const port = user.port!;
-    const hostIp = resolveHostIp(request);
-    const token = crypto.randomBytes(16).toString("base64url");
-    const isHtmx = headers["hx-request"] === "true";
-
-    // spawnSession stops any existing session internally — no need for explicit stopSession here
-    const success = await spawner.spawnSession(username, port, token);
-    if (!success) {
-      db.updateToken(username, null);
-      if (isHtmx) {
-        return new Response(render("partials/_dashboard_status.html", {
-          is_running: false, user_port: port, jupyter_url: "", code_server_url: "",
-          user, ...buildGpuCtx(user)
-        }), { headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to restart JupyterLab session", type: "error" } })
-        }});
-      }
-      return redirect("/dashboard?error=Failed+to+restart+JupyterLab+session", 303);
-    }
-
-    db.updateToken(username, token);
-    user.token = token;
-    if (isHtmx) {
-      return new Response(render("partials/_dashboard_status.html", {
-        is_running: true, user_port: port,
-        jupyter_url: buildJupyterUrl(hostIp, port, token),
-        code_server_url: buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET),
-        user, ...buildGpuCtx(user)
-      }), { headers: {
-        "Content-Type": "text/html",
-        "HX-Trigger": JSON.stringify({ showToast: { message: "JupyterLab restarted", type: "success" } })
-      }});
-    }
-    return redirect("/dashboard?success=JupyterLab+restarted", 303);
-  })
-
-  .get("/session/status", async ({ cookie, request, redirect, headers }) => {
-    const user = getCurrentUser(cookie);
-    if (!user) return redirect("/", 302);
-    if (user.must_change_password) {
-      if (headers["hx-request"] === "true") {
-        return new Response("", { headers: { "HX-Redirect": "/change-password" } });
-      }
-      return redirect("/change-password", 302);
-    }
+    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
     const hostIp = resolveHostIp(request);
     const isRunning = await spawner.isSessionRunning(user.username);
     const jupyterUrl = isRunning && user.token ? buildJupyterUrl(hostIp, user.port!, user.token) : "";
     const codeServerUrl = isRunning ? buildCodeServerUrl(hostIp, user.port! + config.CODE_SERVER_PORT_OFFSET) : "";
-    return new Response(render("partials/_dashboard_status.html", {
-      is_running: isRunning, user_port: user.port,
-      jupyter_url: jupyterUrl, code_server_url: codeServerUrl, user,
-      ssh_host: hostIp, ssh_port: config.SSH_PORT,
+    return Response.json({
+      username: user.username,
+      port: user.port,
+      is_running: isRunning,
+      jupyter_url: jupyterUrl,
+      code_server_url: codeServerUrl,
+      ssh_host: hostIp,
+      ssh_port: config.SSH_PORT,
       ...buildGpuCtx(user)
-    }), { headers: { "Content-Type": "text/html" } });
+    });
   })
 
-  // --- Admin Views & Controls ---
-  .get("/admin", async ({ cookie, query, request, redirect }) => {
+  .post("/api/session/start", async ({ cookie, request }) => {
     const user = getCurrentUser(cookie);
-    if (!user || user.role !== "admin") return redirect("/", 302);
+    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    if (user.role === "admin") return Response.json({ error: "Admins cannot run sessions" }, { status: 403 });
+    if (user.must_change_password) return Response.json({ error: "Password change required", must_change_password: true }, { status: 403 });
+
+    const username = user.username;
+    const port = user.port!;
+    const hostIp = resolveHostIp(request);
+    const token = crypto.randomBytes(16).toString("base64url");
+
+    const success = await spawner.spawnSession(username, port, token);
+    if (!success) {
+      return Response.json({ error: "Failed to start JupyterLab session" }, { status: 500 });
+    }
+
+    db.updateToken(username, token);
+    return Response.json({
+      ok: true,
+      token,
+      jupyter_url: buildJupyterUrl(hostIp, port, token),
+      code_server_url: buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET)
+    });
+  })
+
+  .post("/api/session/stop", async ({ cookie }) => {
+    const user = getCurrentUser(cookie);
+    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    if (user.role === "admin") return Response.json({ error: "Admins cannot run sessions" }, { status: 403 });
+    if (user.must_change_password) return Response.json({ error: "Password change required", must_change_password: true }, { status: 403 });
+
+    const username = user.username;
+    const success = await spawner.stopSession(username);
+    if (!success) {
+      return Response.json({ error: "Failed to stop JupyterLab session" }, { status: 500 });
+    }
+
+    db.updateToken(username, null);
+    return Response.json({ ok: true });
+  })
+
+  .post("/api/session/restart", async ({ cookie, request }) => {
+    const user = getCurrentUser(cookie);
+    if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+    if (user.role === "admin") return Response.json({ error: "Admins cannot run sessions" }, { status: 403 });
+    if (user.must_change_password) return Response.json({ error: "Password change required", must_change_password: true }, { status: 403 });
+
+    const username = user.username;
+    const port = user.port!;
+    const hostIp = resolveHostIp(request);
+    const token = crypto.randomBytes(16).toString("base64url");
+
+    const success = await spawner.spawnSession(username, port, token);
+    if (!success) {
+      db.updateToken(username, null);
+      return Response.json({ error: "Failed to restart JupyterLab session" }, { status: 500 });
+    }
+
+    db.updateToken(username, token);
+    return Response.json({
+      ok: true,
+      token,
+      jupyter_url: buildJupyterUrl(hostIp, port, token),
+      code_server_url: buildCodeServerUrl(hostIp, port + config.CODE_SERVER_PORT_OFFSET)
+    });
+  })
+
+  // --- Admin User & Session Controls ---
+  .get("/api/admin/users", async ({ cookie, request }) => {
+    const admin = getCurrentUser(cookie);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const enriched = await getEnrichedUsers(request);
     const gpuConfig = db.getGpuConfig();
 
@@ -436,34 +329,28 @@ const app = new Elysia()
 
     logs.sort((a, b) => b.mtime - a.mtime);
 
-    return new Response(render("admin.html", {
-      user, users: enriched, error: query.error ?? null, success: query.success ?? null, gpu_config: gpuConfig, logs
-    }), { headers: { "Content-Type": "text/html" } });
+    return Response.json({
+      users: enriched,
+      gpu_config: gpuConfig,
+      logs
+    });
   })
 
-  .post("/admin/users", async ({ body, cookie, request, redirect, headers }) => {
+  .post("/api/admin/users", async ({ body, cookie }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
-    const { username, password } = body as { username?: string; password?: string };
-    const isHtmx = headers["hx-request"] === "true";
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+    const { username } = body as { username?: string };
 
     const userTrim = (username ?? "").trim();
     if (!/^[a-zA-Z0-9_-]+$/.test(userTrim)) {
-      if (isHtmx) return new Response("", { status: 422, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: "Username must be alphanumeric", type: "error" } })
-      }});
-      return redirect("/admin?error=Username+must+be+alphanumeric", 303);
+      return Response.json({ error: "Username must be alphanumeric" }, { status: 400 });
     }
 
     const port = spawner.getNextPort();
     if (!port) {
-      if (isHtmx) return new Response("", { status: 422, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: "No available ports left (limit 9)", type: "error" } })
-      }});
-      return redirect("/admin?error=No+available+ports+left+(limit+9)", 303);
+      return Response.json({ error: "No available ports left (limit 9)" }, { status: 400 });
     }
 
-    // Generate password server-side so admin always gets a known, displayable credential
     const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let tempPass = "";
     for (let i = 0; i < 12; i++) {
@@ -472,53 +359,35 @@ const app = new Elysia()
 
     const created = await db.createUser(userTrim, tempPass, "user", port);
     if (!created) {
-      if (isHtmx) return new Response("", { status: 422, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: "Username already exists", type: "error" } })
-      }});
-      return redirect("/admin?error=Username+already+exists", 303);
+      return Response.json({ error: "Username already exists" }, { status: 400 });
     }
 
-    // Force password change on first login
     await db.changePassword(userTrim, tempPass, true);
 
     const envOk = await spawner.setupUserEnv(userTrim);
     if (!envOk) {
       db.deleteUser(userTrim);
-      if (isHtmx) return new Response("", { status: 422, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: "Failed to initialize venv for user", type: "error" } })
-      }});
-      return redirect("/admin?error=Failed+to+initialize+venv+for+user", 303);
+      return Response.json({ error: "Failed to initialize venv for user" }, { status: 500 });
     }
 
-    if (isHtmx) {
-      const enriched = await getEnrichedUsers(request);
-      return new Response(render("partials/_admin_user_table_body.html", { users: enriched }), {
-        headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({
-            showToast: { message: `Created user ${userTrim}`, type: "success" },
-            userListUpdated: null,
-            "password-reset": { username: userTrim, tempPass }
-          })
-        }
-      });
-    }
-    return redirect(`/admin?success=Created+user+${userTrim}.+Temp+password:+${tempPass}`, 303);
+    return Response.json({
+      ok: true,
+      username: userTrim,
+      tempPass
+    });
   })
 
-  .post("/admin/users/:username", async ({ params, body, cookie, redirect, headers }) => {
+  .post("/api/admin/users/:username/delete", async ({ params, body, cookie }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
 
-    // 1. Stop session
     await spawner.stopSession(username);
 
-    // 2. Optionally delete files
-    const deleteFiles = (body as any)?.delete_files === "true";
+    const deleteFiles = (body as any)?.delete_files === true || (body as any)?.delete_files === "true";
     let msg = "";
     if (deleteFiles) {
       spawner.cleanupUserFiles(username);
@@ -527,37 +396,19 @@ const app = new Elysia()
       msg = `Deleted user ${username} (files preserved)`;
     }
 
-    // 3. Delete from DB
     db.deleteUser(username);
-
-    const isHtmx = headers["hx-request"] === "true";
-    if (isHtmx) {
-      return new Response("", {
-        headers: {
-          "HX-Trigger": JSON.stringify({ showToast: { message: msg, type: "success" }, userListUpdated: null })
-        }
-      });
-    }
-
-    return redirect(`/admin?success=${encodeURIComponent(msg)}`, 303);
+    return Response.json({ ok: true, message: msg });
   })
 
-  .post("/admin/users/:username/reset-password", async ({ params, cookie, headers, redirect }) => {
+  .post("/api/admin/users/:username/reset-password", async ({ params, cookie }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
     const user = db.getUserByUsername(username);
-    if (!user) {
-      if (headers["hx-request"] === "true") {
-        return new Response("", { status: 404, headers: {
-          "HX-Trigger": JSON.stringify({ showToast: { message: "User not found", type: "error" } })
-        }});
-      }
-      return redirect("/admin?error=User+not+found", 303);
-    }
+    if (!user) return Response.json({ error: "User not found" }, { status: 404 });
 
     const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let tempPass = "temp-";
@@ -566,290 +417,129 @@ const app = new Elysia()
     }
 
     await db.changePassword(username, tempPass, true);
-
-    const isHtmx = headers["hx-request"] === "true";
-    if (isHtmx) {
-      return new Response("", {
-        headers: {
-          "HX-Trigger": JSON.stringify({
-            showToast: { message: `Password reset for ${username}`, type: "success" },
-            "password-reset": { username, tempPass }
-          })
-        }
-      });
-    }
-    return redirect(`/admin?success=Password+reset+for+${username}.+New+temp+password:+${tempPass}`, 303);
+    return Response.json({ ok: true, tempPass });
   })
 
-  .post("/admin/session/start/:username", async ({ params, cookie, request, redirect, headers }) => {
+  .post("/api/admin/session/start/:username", async ({ params, cookie, request }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
     const user = db.getUserByUsername(username);
-    const isHtmx = headers["hx-request"] === "true";
-
-    if (!user) {
-      if (isHtmx) return new Response("", { status: 404, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: "User not found", type: "error" } })
-      }});
-      return redirect("/admin?error=User+not+found", 303);
-    }
+    if (!user) return Response.json({ error: "User not found" }, { status: 404 });
 
     const port = user.port!;
     const token = crypto.randomBytes(16).toString("base64url");
     const success = await spawner.spawnSession(username, port, token);
     if (!success) {
-      if (isHtmx) return new Response("", { status: 500, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: `Failed to start session for ${username}`, type: "error" } })
-      }});
-      return redirect(`/admin?error=Failed+to+start+session+for+${username}`, 303);
+      return Response.json({ error: `Failed to start session for ${username}` }, { status: 500 });
     }
 
     db.updateToken(username, token);
-
-    if (isHtmx) {
-      const enriched = await enrichUser(username, request);
-      return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-        headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({ showToast: { message: `JupyterLab started for ${username}`, type: "success" } })
-        }
-      });
-    }
-    return redirect(`/admin?success=JupyterLab+started+for+${username}`, 303);
+    const enriched = await enrichUser(username, request);
+    return Response.json({ ok: true, user: enriched });
   })
 
-  .post("/admin/session/stop/:username", async ({ params, cookie, request, redirect, headers }) => {
+  .post("/api/admin/session/stop/:username", async ({ params, cookie, request }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
     const user = db.getUserByUsername(username);
-    const isHtmx = headers["hx-request"] === "true";
-
-    if (!user) {
-      if (isHtmx) return new Response("", { status: 404, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: "User not found", type: "error" } })
-      }});
-      return redirect("/admin?error=User+not+found", 303);
-    }
+    if (!user) return Response.json({ error: "User not found" }, { status: 404 });
 
     const success = await spawner.stopSession(username);
     if (!success) {
-      if (isHtmx) return new Response("", { status: 500, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: `Failed to stop session for ${username}`, type: "error" } })
-      }});
-      return redirect(`/admin?error=Failed+to+stop+session+for+${username}`, 303);
+      return Response.json({ error: `Failed to stop session for ${username}` }, { status: 500 });
     }
 
     db.updateToken(username, null);
-
-    if (isHtmx) {
-      const enriched = await enrichUser(username, request);
-      return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-        headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({ showToast: { message: `JupyterLab stopped for ${username}`, type: "success" } })
-        }
-      });
-    }
-    return redirect(`/admin?success=JupyterLab+stopped+for+${username}`, 303);
+    const enriched = await enrichUser(username, request);
+    return Response.json({ ok: true, user: enriched });
   })
 
-  .post("/admin/session/restart/:username", async ({ params, cookie, request, redirect, headers }) => {
+  .post("/api/admin/session/restart/:username", async ({ params, cookie, request }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
     const user = db.getUserByUsername(username);
-    const isHtmx = headers["hx-request"] === "true";
-
-    if (!user) {
-      if (isHtmx) return new Response("", { status: 404, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: "User not found", type: "error" } })
-      }});
-      return redirect("/admin?error=User+not+found", 303);
-    }
+    if (!user) return Response.json({ error: "User not found" }, { status: 404 });
 
     const port = user.port!;
     const token = crypto.randomBytes(16).toString("base64url");
-
-    // spawnSession stops any existing session internally — no need for explicit stopSession here
     const success = await spawner.spawnSession(username, port, token);
     if (!success) {
       db.updateToken(username, null);
-      if (isHtmx) return new Response("", { status: 500, headers: {
-        "HX-Trigger": JSON.stringify({ showToast: { message: `Failed to restart session for ${username}`, type: "error" } })
-      }});
-      return redirect(`/admin?error=Failed+to+restart+session+for+${username}`, 303);
+      return Response.json({ error: `Failed to restart session for ${username}` }, { status: 500 });
     }
 
     db.updateToken(username, token);
-
-    if (isHtmx) {
-      const enriched = await enrichUser(username, request);
-      return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-        headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({ showToast: { message: `JupyterLab restarted for ${username}`, type: "success" } })
-        }
-      });
-    }
-    return redirect(`/admin?success=JupyterLab+restarted+for+${username}`, 303);
-  })
-
-  .get("/admin/users/row/:username", async ({ params, cookie, request }) => {
-    const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
-    const username = params.username;
-    try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
-    }
     const enriched = await enrichUser(username, request);
-    if (!enriched) return new Response("User not found", { status: 404 });
-    return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-      headers: { "Content-Type": "text/html" }
-    });
+    return Response.json({ ok: true, user: enriched });
   })
 
-  .get("/admin/users/status-poll", async ({ cookie, request }) => {
+  // --- Admin GPU VM & Logging APIs ---
+  .post("/api/admin/gpu/assign/:username", async ({ params, body, cookie, request }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
-    const enriched = await getEnrichedUsers(request);
-    return new Response(render("partials/_admin_user_table_body.html", { users: enriched, is_poll: true }), {
-      headers: { "Content-Type": "text/html" }
-    });
-  })
-
-  .get("/admin/partials/gpu-select", async ({ cookie }) => {
-    const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
-    const users = db.listUsers();
-    return new Response(render("partials/_admin_gpu_select.html", { users }), {
-      headers: { "Content-Type": "text/html" }
-    });
-  })
-
-  .post("/admin/gpu/assign/:username", async ({ params, body, cookie, request, redirect, headers }) => {
-    const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
     const user = db.getUserByUsername(username);
-    if (!user) return new Response("User not found", { status: 404 });
+    if (!user) return Response.json({ error: "User not found" }, { status: 404 });
 
-    const { gpu_ssh_host, gpu_ssh_port, gpu_endpoint, gpu_streamlit_endpoint, gpu_code_server_endpoint, gpu_token } = body as Record<string, any>;
+    const { gpu_ssh_host, gpu_ssh_port, gpu_ssh_user, gpu_endpoint, gpu_streamlit_endpoint, gpu_code_server_endpoint, gpu_token } = body as Record<string, any>;
     const host = (gpu_ssh_host ?? "").trim();
     const port = gpu_ssh_port ? parseInt(gpu_ssh_port, 10) : 22;
+    const sshUser = (gpu_ssh_user ?? "root").trim();
     const endpoint = (gpu_endpoint ?? "").trim();
     const streamlitEndpoint = (gpu_streamlit_endpoint ?? "").trim();
     const codeServerEndpoint = (gpu_code_server_endpoint ?? "").trim();
     const tokenToSave = (gpu_token ?? "").trim() || user.gpu_token || "";
 
-    const isHtmx = headers["hx-request"] === "true";
-
     if (endpoint !== "" && !gpu.isValidGpuEndpoint(endpoint)) {
-      if (isHtmx) {
-        const enriched = await enrichUser(username, request);
-        return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-          headers: {
-            "Content-Type": "text/html",
-            "HX-Trigger": JSON.stringify({
-              showToast: { message: "Invalid GPU endpoint URL format or contains dangerous characters", type: "error" }
-            })
-          }
-        });
-      }
-      return redirect(`/admin?error=Invalid+GPU+endpoint`, 303);
+      return Response.json({ error: "Invalid GPU endpoint URL format" }, { status: 400 });
     }
 
     if (host) {
       try {
         validateSshHost(host);
+        validateSshUser(sshUser);
       } catch (e: any) {
-        if (isHtmx) {
-          const enriched = await enrichUser(username, request);
-          return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-            headers: {
-              "Content-Type": "text/html",
-              "HX-Trigger": JSON.stringify({
-                showToast: { message: `Invalid SSH host: ${e.message}`, type: "error" }
-              })
-            }
-          });
-        }
-        return redirect(`/admin?error=Invalid+SSH+host`, 303);
+        return Response.json({ error: `Invalid SSH config: ${e.message}` }, { status: 400 });
       }
     }
 
-    // Validate optional streamlit/code-server endpoints
     for (const [label, ep] of [["Streamlit", streamlitEndpoint], ["Code Server", codeServerEndpoint]] as [string, string][]) {
       if (ep !== "" && !gpu.isValidGpuEndpoint(ep)) {
-        if (isHtmx) {
-          const enriched = await enrichUser(username, request);
-          return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-            headers: {
-              "Content-Type": "text/html",
-              "HX-Trigger": JSON.stringify({
-                showToast: { message: `Invalid ${label} endpoint URL`, type: "error" }
-              })
-            }
-          });
-        }
-        return redirect(`/admin?error=Invalid+${label}+endpoint`, 303);
+        return Response.json({ error: `Invalid ${label} endpoint URL` }, { status: 400 });
       }
     }
 
-    db.assignGpu(username, endpoint, tokenToSave, host, port, streamlitEndpoint, codeServerEndpoint);
-
-    if (isHtmx) {
-      const enriched = await enrichUser(username, request);
-      return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-        headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({
-            showToast: { message: `GPU assigned to ${username}`, type: "success" },
-            userListUpdated: null
-          })
-        }
-      });
-    }
-    return redirect(`/admin?success=GPU+assigned+to+${username}`, 303);
+    db.assignGpu(username, endpoint, tokenToSave, host, port, sshUser, streamlitEndpoint, codeServerEndpoint);
+    const enriched = await enrichUser(username, request);
+    return Response.json({ ok: true, user: enriched });
   })
 
-  .post("/admin/gpu/unassign/:username", async ({ params, cookie, request, redirect, headers }) => {
+  .post("/api/admin/gpu/unassign/:username", async ({ params, cookie, request }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
 
     db.unassignGpu(username);
-
-    const isHtmx = headers["hx-request"] === "true";
-    if (isHtmx) {
-      const enriched = await enrichUser(username, request);
-      return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-        headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({
-            showToast: { message: `GPU configuration removed for ${username}`, type: "success" },
-            userListUpdated: null
-          })
-        }
-      });
-    }
-    return redirect(`/admin?success=GPU+configuration+removed+for+${username}`, 303);
+    const enriched = await enrichUser(username, request);
+    return Response.json({ ok: true, user: enriched });
   })
 
   .get("/admin/gpu/init-stream/:username", async ({ params, cookie, headers }) => {
@@ -904,7 +594,7 @@ const app = new Elysia()
     let token = user.gpu_token;
     if (!token) {
       token = crypto.randomBytes(16).toString("base64url");
-      db.assignGpu(username, user.gpu_endpoint ?? "", token, sshHost, sshPort,
+      db.assignGpu(username, user.gpu_endpoint ?? "", token, sshHost, sshPort, user.gpu_ssh_user ?? "root",
         user.gpu_streamlit_endpoint ?? "", user.gpu_code_server_endpoint ?? "");
     }
 
@@ -913,7 +603,7 @@ const app = new Elysia()
       sshHost,
       sshPort,
       gpuConf.ssh_key_path,
-      gpuConf.ssh_user,
+      user.gpu_ssh_user || "root",
       token,
       user.gpu_endpoint ?? "",
       gpuConf.remote_base_dir
@@ -922,154 +612,126 @@ const app = new Elysia()
     return new Response(toUint8ArrayStream(stringStream), { headers: sseHeaders });
   })
 
-  .post("/admin/gpu/stop/:username", async ({ params, cookie, request, redirect, headers }) => {
+  .post("/api/admin/gpu/stop/:username", async ({ params, cookie, request }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
 
     const [success, msg] = await gpu.stopGpuSession(username);
-
-    const isHtmx = headers["hx-request"] === "true";
-    if (isHtmx) {
-      const enriched = await enrichUser(username, request);
-      const toastType = success ? "success" : "error";
-      const toastMsg = success ? `GPU session stopped for ${username}` : msg;
-      return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-        headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({
-            showToast: { message: toastMsg, type: toastType }
-          })
-        }
-      });
+    if (!success) {
+      return Response.json({ error: msg }, { status: 500 });
     }
-    if (success) {
-      return redirect(`/admin?success=GPU+session+stopped+for+${username}`, 303);
-    } else {
-      return redirect(`/admin?error=${encodeURIComponent(msg)}`, 303);
-    }
+    const enriched = await enrichUser(username, request);
+    return Response.json({ ok: true, user: enriched });
   })
 
-  .post("/admin/gpu/reset/:username", async ({ params, cookie, request, redirect, headers }) => {
+  .post("/api/admin/gpu/reset/:username", async ({ params, cookie, request }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
 
     db.updateGpuInitStatus(username, null);
-
-    const isHtmx = headers["hx-request"] === "true";
-    if (isHtmx) {
-      const enriched = await enrichUser(username, request);
-      return new Response(render("partials/_admin_user_row.html", { u: enriched }), {
-        headers: {
-          "Content-Type": "text/html",
-          "HX-Trigger": JSON.stringify({
-            showToast: { message: `GPU status reset for ${username}`, type: "success" },
-            userListUpdated: null
-          })
-        }
-      });
-    }
-    return redirect(`/admin?success=GPU+status+reset+for+${username}`, 303);
+    const enriched = await enrichUser(username, request);
+    return Response.json({ ok: true, user: enriched });
   })
 
-  .get("/admin/gpu/config", ({ cookie }) => {
+  .get("/api/admin/gpu/config", ({ cookie }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     return Response.json(db.getGpuConfig());
   })
 
-  .post("/admin/gpu/config", async ({ body, cookie, headers }) => {
+  .post("/api/admin/gpu/config", async ({ body, cookie }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
 
-    const { ssh_host, ssh_port, ssh_user, ssh_key_path, remote_base_dir } = body as Record<string, any>;
-    const host = (ssh_host ?? "").trim();
-    const port = ssh_port ? parseInt(ssh_port, 10) : 22;
-    const user = (ssh_user ?? "root").trim();
+    const { ssh_key_path, remote_base_dir, additional_public_keys } = body as Record<string, any>;
     const keyPath = (ssh_key_path ?? "").trim();
     const rBaseDir = (remote_base_dir ?? "/workspace").trim();
+    const addPubKeys = (additional_public_keys ?? "").trim();
 
-    const isHtmx = headers["hx-request"] === "true";
-
-    // Validate SSH key path exists
     if (!keyPath || !existsSync(keyPath)) {
-      if (isHtmx) {
-        return new Response("", {
-          status: 422,
-          headers: {
-            "HX-Trigger": JSON.stringify({
-              showToast: { message: `SSH Key file not found on disk: ${keyPath}`, type: "error" }
-            })
-          }
-        });
-      }
-      return new Response(`SSH Key file not found: ${keyPath}`, { status: 400 });
+      return Response.json({ error: `SSH Key file not found on disk: ${keyPath}` }, { status: 400 });
     }
 
-    // Validate shell-safe values before storing
     try {
-      if (host) validateSshHost(host);
-      validateSshUser(user);
       validateRemoteBaseDir(rBaseDir);
     } catch (e: any) {
-      if (isHtmx) {
-        return new Response("", {
-          status: 422,
-          headers: {
-            "HX-Trigger": JSON.stringify({
-              showToast: { message: `Invalid config value: ${e.message}`, type: "error" }
-            })
-          }
-        });
-      }
-      return new Response(`Invalid config value: ${e.message}`, { status: 400 });
+      return Response.json({ error: `Invalid config value: ${e.message}` }, { status: 400 });
     }
 
-    db.saveGpuConfig(host, port, user, keyPath, rBaseDir);
-
-    if (isHtmx) {
-      return new Response("", {
-        headers: {
-          "HX-Trigger": JSON.stringify({
-            showToast: { message: "Global GPU configuration saved successfully", type: "success" }
-          })
-        }
-      });
-    }
-    return new Response("Config saved");
+    db.saveGpuConfig("", 22, "root", keyPath, rBaseDir, addPubKeys);
+    return Response.json({ ok: true });
   })
 
-  .get("/admin/gpu/last-log/:username", ({ params, cookie }) => {
+  .get("/api/admin/gpu/last-log/:username", ({ params, cookie }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
     const username = params.username;
     try { spawner.validateUsername(username); } catch (_) {
-      return new Response("Invalid username", { status: 400 });
+      return Response.json({ error: "Invalid username" }, { status: 400 });
     }
     const logContent = gpu.getLastGpuLog(username);
-    return new Response(logContent, { headers: { "Content-Type": "text/plain" } });
+    return Response.json({ log: logContent });
   })
 
-  .get("/admin/logs", ({ cookie, redirect }) => {
+  .get("/api/admin/logs", ({ cookie }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return redirect("/", 302);
-    return redirect("/admin?tab=logs", 302);
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+
+    const gpuLogsDir = join(config.BASE_DIR, ".gpu_logs");
+    const rsyncLogsDir = join(config.BASE_DIR, ".rsync_logs");
+    const logs: any[] = [];
+
+    if (existsSync(gpuLogsDir)) {
+      const files = readdirSync(gpuLogsDir);
+      for (const f of files) {
+        if (f.endsWith(".log")) {
+          const fullPath = join(gpuLogsDir, f);
+          const stat = statSync(fullPath);
+          logs.push({
+            name: f,
+            type: "gpu-init",
+            size: stat.size,
+            mtime: stat.mtimeMs / 1000
+          });
+        }
+      }
+    }
+
+    if (existsSync(rsyncLogsDir)) {
+      const files = readdirSync(rsyncLogsDir);
+      for (const f of files) {
+        if (f.endsWith(".log")) {
+          const fullPath = join(rsyncLogsDir, f);
+          const stat = statSync(fullPath);
+          logs.push({
+            name: f,
+            type: f.includes("rsync-to") ? "rsync-to" : "rsync-from",
+            size: stat.size,
+            mtime: stat.mtimeMs / 1000
+          });
+        }
+      }
+    }
+
+    logs.sort((a, b) => b.mtime - a.mtime);
+    return Response.json({ logs });
   })
 
-  .get("/admin/logs/view", ({ query, cookie }) => {
+  .get("/api/admin/logs/view", ({ query, cookie }) => {
     const admin = getCurrentUser(cookie);
-    if (!admin || admin.role !== "admin") return new Response("Forbidden", { status: 403 });
+    if (!admin || admin.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
 
     const filename = query.filename;
     if (!filename || filename.includes("..") || filename.startsWith("/") || filename.startsWith("\\")) {
-      return new Response("Invalid filename", { status: 400 });
+      return Response.json({ error: "Invalid filename" }, { status: 400 });
     }
 
     const gpuLogsDir = join(config.BASE_DIR, ".gpu_logs");
@@ -1081,18 +743,18 @@ const app = new Elysia()
     }
 
     if (!existsSync(filePath)) {
-      return new Response("Log file not found", { status: 404 });
+      return Response.json({ error: "Log file not found" }, { status: 404 });
     }
 
     try {
       const content = readFileSync(filePath, "utf-8");
-      return { filename, content };
+      return Response.json({ filename, content });
     } catch (err: any) {
-      return new Response(`Error reading log file: ${err.message}`, { status: 500 });
+      return Response.json({ error: `Error reading log file: ${err.message}` }, { status: 500 });
     }
   })
 
-  // --- User GPU Sync & Tree API ---
+  // --- User GPU Sync & Tree APIs ---
   .get("/session/gpu/sync-to-stream", ({ cookie, query, redirect, headers, request }) => {
     const user = getCurrentUser(cookie);
     if (!user) return redirect("/", 302);
@@ -1161,6 +823,29 @@ const app = new Elysia()
     }
 
     return Response.json(getTree(userDir, userDir));
+  })
+
+  // --- SPA Frontend Fallback (React Router client-side routing support) ---
+  .get("*", ({ set, path }) => {
+    // If the path points to a file in frontend/dist, serve it
+    const filePath = join(__dirname, "../frontend/dist", path);
+    if (existsSync(filePath) && !statSync(filePath).isDirectory()) {
+      if (path.endsWith(".js")) set.headers["Content-Type"] = "application/javascript";
+      else if (path.endsWith(".css")) set.headers["Content-Type"] = "text/css";
+      else if (path.endsWith(".svg")) set.headers["Content-Type"] = "image/svg+xml";
+      else if (path.endsWith(".png")) set.headers["Content-Type"] = "image/png";
+      else if (path.endsWith(".ico")) set.headers["Content-Type"] = "image/x-icon";
+      return readFileSync(filePath);
+    }
+    const htmlPath = join(__dirname, "../frontend/dist/index.html");
+    if (existsSync(htmlPath)) {
+      set.headers["Content-Type"] = "text/html";
+      return readFileSync(htmlPath);
+    }
+    return new Response(
+      "Frontend build not found. Running in development? Use the Vite dev server at http://localhost:5173",
+      { status: 404 }
+    );
   })
 
   .listen(config.HUB_PORT);

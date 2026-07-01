@@ -251,6 +251,7 @@ export async function stopGpuSession(username: string): Promise<[boolean, string
 
   const sshHost = user.gpu_ssh_host;
   const sshPort = user.gpu_ssh_port ?? 22;
+  const sshUser = user.gpu_ssh_user || "root";
   const gpuConf = getGpuConfig();
   if (!sshHost || !gpuConf.ssh_key_path || !existsSync(gpuConf.ssh_key_path)) {
     return [false, "GPU SSH not configured for user"];
@@ -258,12 +259,12 @@ export async function stopGpuSession(username: string): Promise<[boolean, string
 
   try {
     validateSshHost(sshHost);
-    validateSshUser(gpuConf.ssh_user);
+    validateSshUser(sshUser);
     const proc = Bun.spawn([
       "ssh", "-p", String(sshPort),
       "-i", gpuConf.ssh_key_path,
       "-o", "StrictHostKeyChecking=no",
-      `${gpuConf.ssh_user}@${sshHost}`,
+      `${sshUser}@${sshHost}`,
       `tmux kill-session -t gpu_${username}`
     ], { stdout: "pipe", stderr: "pipe" });
 
@@ -369,6 +370,26 @@ export function gpuInitStream(
 
         await runStep("apt-update", "apt-get update -y");
         await runStep("apt-install", "apt-get install -y tmux vim btop rsync zstd");
+
+        // Append additional public keys if configured
+        const gpuConf = getGpuConfig();
+        const extraPubKeys = gpuConf.additional_public_keys || "";
+        if (extraPubKeys.trim()) {
+          const keysCleaned = extraPubKeys
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0 && !line.startsWith("#"));
+
+          if (keysCleaned.length > 0) {
+            let cmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys";
+            for (const key of keysCleaned) {
+              const escapedKey = key.replace(/'/g, "'\\''");
+              cmd += ` && (grep -qF '${escapedKey}' ~/.ssh/authorized_keys || echo '${escapedKey}' >> ~/.ssh/authorized_keys)`;
+            }
+            await runStep("setup-extra-ssh-keys", cmd);
+          }
+        }
+
         await runStep("install-uv", "curl -LsSf https://astral.sh/uv/install.sh | sh");
         await runStep("mkdir-workspace", `mkdir -p ${remoteBaseDir}/${username}`);
         await runStep("create-venv", `$HOME/.local/bin/uv venv --clear --python ${PYTHON_VERSION} ${remoteBaseDir}/${username}/.venv`);
@@ -398,6 +419,7 @@ export function gpuInitStream(
         updateGpuInitStatus(username, "failed");
         emit("Initialization FAILED");
       } finally {
+        await new Promise((r) => setTimeout(r, 500));
         controller.close();
         logWriter.end();
       }
@@ -494,6 +516,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
 
         const sshHost = user.gpu_ssh_host;
         const sshPort = user.gpu_ssh_port ?? 22;
+        const sshUser = user.gpu_ssh_user || "root";
         const gpuConf = getGpuConfig();
 
         if (!sshHost || !gpuConf.ssh_key_path || !existsSync(gpuConf.ssh_key_path)) {
@@ -503,7 +526,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
 
         try {
           validateSshHost(sshHost);
-          validateSshUser(gpuConf.ssh_user);
+          validateSshUser(sshUser);
           validateRemoteBaseDir(gpuConf.remote_base_dir);
         } catch (e: any) {
           emit(`Error: ${e.message}`);
@@ -535,13 +558,13 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
         }
 
         const localPath = targetDir + "/";
-        const remotePath = `${gpuConf.ssh_user}@${sshHost}:${gpuConf.remote_base_dir}/${username}/${syncSub}/`;
+        const remotePath = `${sshUser}@${sshHost}:${gpuConf.remote_base_dir}/${username}/${syncSub}/`;
 
         // Pre-create remote directory for "to" direction
         if (direction === "to") {
           const mkdirProc = Bun.spawn([
             "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
-            "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+            "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
             `mkdir -p ${gpuConf.remote_base_dir}/${username}/${syncSub}/`
           ], { stdout: "pipe", stderr: "pipe" });
 
@@ -574,7 +597,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
         try {
           if (direction === "to") {
             emit("Checking remote directory status...");
-            const targetExists = await remoteDirExists(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDir);
+            const targetExists = await remoteDirExists(sshPort, gpuConf.ssh_key_path, sshUser, sshHost, remoteDir);
             if (!targetExists) {
               emit("Calculating local directory size and file count...");
               const localSize = await getLocalDirSize(targetDir);
@@ -596,8 +619,8 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
             if (!targetExists) {
               emit("Calculating remote directory size and file count...");
               const remoteDirToMeasure = `${gpuConf.remote_base_dir}/${username}/${syncSub}`;
-              const remoteSize = await getRemoteDirSize(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDirToMeasure);
-              const remoteCount = await getRemoteFileCount(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDirToMeasure);
+              const remoteSize = await getRemoteDirSize(sshPort, gpuConf.ssh_key_path, sshUser, sshHost, remoteDirToMeasure);
+              const remoteCount = await getRemoteFileCount(sshPort, gpuConf.ssh_key_path, sshUser, sshHost, remoteDirToMeasure);
               if (remoteSize > SYNC_SIZE_THRESHOLD || remoteCount > SYNC_FILE_THRESHOLD) {
                 useZstd = true;
                 totalBytes = remoteSize;
@@ -608,7 +631,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
               emit("Local directory already exists. Bypassing compression for direct sync...");
               // Get remote size just for log/progress info
               const remoteDirToMeasure = `${gpuConf.remote_base_dir}/${username}/${syncSub}`;
-              totalBytes = await getRemoteDirSize(sshPort, gpuConf.ssh_key_path, gpuConf.ssh_user, sshHost, remoteDirToMeasure);
+              totalBytes = await getRemoteDirSize(sshPort, gpuConf.ssh_key_path, sshUser, sshHost, remoteDirToMeasure);
             }
           }
         } finally {
@@ -618,7 +641,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
         if (!useZstd) {
           // Direct rsync
           const localPath = targetDir + "/";
-          const remotePath = `${gpuConf.ssh_user}@${sshHost}:${gpuConf.remote_base_dir}/${username}/${syncSub}/`;
+          const remotePath = `${sshUser}@${sshHost}:${gpuConf.remote_base_dir}/${username}/${syncSub}/`;
 
           const src = direction === "to" ? localPath : remotePath;
           const dst = direction === "to" ? remotePath : localPath;
@@ -691,7 +714,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
             const transferCmd = [
               "rsync", "-a", "--info=progress2",
               "-e", `ssh -p ${sshPort} -i ${gpuConf.ssh_key_path} -o StrictHostKeyChecking=no`,
-              localTempArchive, `${gpuConf.ssh_user}@${sshHost}:${remoteTempArchive}`
+              localTempArchive, `${sshUser}@${sshHost}:${remoteTempArchive}`
             ];
 
             const proc = Bun.spawn(transferCmd, { stdout: "pipe", stderr: "pipe" });
@@ -728,7 +751,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
             emit("Extracting files on GPU VM...");
             const extractCmd = [
               "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
-              "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+              "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
               `mkdir -p ${remoteDir} && zstd -d -T0 -c ${remoteTempArchive} | tar -xf - -C ${gpuConf.remote_base_dir} && rm -f ${remoteTempArchive}`
             ];
             const extractExit = await runCmd(extractCmd, "Extracting files remotely");
@@ -749,7 +772,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
             const remoteTarExcludeStr = SYNC_EXCLUDES.map(p => `--exclude="${p}"`).join(" ");
             const remoteCompressCmd = [
               "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
-              "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+              "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
               `tar ${remoteTarExcludeStr} -I "zstd -T0" -cf ${remoteTempArchive} -C ${gpuConf.remote_base_dir} ${relativePath}`
             ];
             const compressExit = await runCmd(remoteCompressCmd, "Compressing files remotely");
@@ -763,7 +786,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
             const transferCmd = [
               "rsync", "-a", "--info=progress2",
               "-e", `ssh -p ${sshPort} -i ${gpuConf.ssh_key_path} -o StrictHostKeyChecking=no`,
-              `${gpuConf.ssh_user}@${sshHost}:${remoteTempArchive}`, localTempArchive
+              `${sshUser}@${sshHost}:${remoteTempArchive}`, localTempArchive
             ];
 
             const proc = Bun.spawn(transferCmd, { stdout: "pipe", stderr: "pipe" });
@@ -792,7 +815,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
                 try {
                   const cleanupRemoteCmd = [
                     "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
-                    "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+                    "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
                     `rm -f ${remoteTempArchive}`
                   ];
                   Bun.spawn(cleanupRemoteCmd);
@@ -822,7 +845,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
             try {
               const cleanupRemoteCmd = [
                 "ssh", "-p", String(sshPort), "-i", gpuConf.ssh_key_path,
-                "-o", "StrictHostKeyChecking=no", `${gpuConf.ssh_user}@${sshHost}`,
+                "-o", "StrictHostKeyChecking=no", `${sshUser}@${sshHost}`,
                 `rm -f ${remoteTempArchive}`
               ];
               Bun.spawn(cleanupRemoteCmd);
@@ -833,6 +856,7 @@ function _rsyncStream(username: string, subpath: string, direction: "to" | "from
         emit(`Error: ${e.message}`);
       } finally {
         isClosed = true;
+        await new Promise((r) => setTimeout(r, 500));
         try {
           controller.close();
         } catch (_) {}

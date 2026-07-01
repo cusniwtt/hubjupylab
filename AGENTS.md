@@ -47,7 +47,7 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 - **Credential Sharing**: Reuses JupyterLab session token as code-server authentication password.
 - **Exclusion Filters**: Added `.code-server` to `SYNC_EXCLUDES` to prevent synchronization overhead.
 - **GPU code-server**: Uses [coder/code-server](https://github.com/coder/code-server) (NOT Microsoft's `code serve-web`) installed via `curl -fsSL https://code-server.dev/install.sh | sh`. Runs on port 8889 with `--auth password` using the session token. Works correctly behind RunPod's Cloudflare HTTP proxy (WebSocket support, no port-exposure quirks). URL auto-derived from JupyterLab endpoint by replacing `-8888.` with `-8889.` in the proxy hostname.
-- **Local code-server**: Uses Microsoft's VS Code CLI serve-web internals via spawner.ts (unchanged — not exposed through a reverse proxy, runs on localhost only).
+- **Local code-server**: Uses the standard `code-server` command locally with password-based token authentication, matching the GPU VM configuration. Runs on localhost at `JupyterLab port + 100`.
 
 ### 7. UI Dashboard Layout Refinements
 - **Badge Indicator**: Added Session Password/Token display card above JupyterLab launcher button.
@@ -62,21 +62,33 @@ Agent log documenting changes, design choices, and workspace status for pair-pro
 - **Forced Password Changes**: Resets flag `must_change_password` in DB. Users are forced to change their passwords before accessing any dashboard or session control endpoints.
 - **User Password Updates**: Users can voluntarily change passwords at any time via a Change Password dashboard link.
 
+### 10. Vite + React Frontend SPA Migration
+- **Single Page Application**: Replaced Nunjucks HTML templates and HTMX/Alpine.js polling/swaps with a modern React SPA built using Vite.
+- **REST JSON API**: Converted all 30 Elysia routes to return structured JSON payloads, keeping cookie-based session HMAC validation intact.
+- **Secure Route Guards**: Integrated react-router-dom with automated session verification and forced redirect handling when `must_change_password` is set.
+- **Custom React Componentry**: Designed bespoke CSS components for global toast notifications, expandable GPU manager blocks, directory tree browsers, and live SSE event-stream terminals.
+- **Dependency Cleanups**: Removed nunjucks node dependencies, `@types/nunjucks`, and static scripts (htmx.js, alpine.js) from the project tree.
+
+### 11. Slide-over GPU Drawer & Config Tab Layout
+- **Slide-over Drawer panel**: Replaced cluttered inline table rows with a premium, modern right-side slide-over drawer panel for configuring user-specific GPU settings.
+- **Isolate GPU parameters**: The drawer allows configuring SSH Host, SSH Port, SSH User (defaulting to `root`), along with endpoints and tokens.
+- **Config tab relocation**: Moved remaining global configs (`SSH Key Path` and `Remote Base Directory`) to a new dedicated "Config" tab, keeping user administration simple and focused.
+- **Columns Separation**: Separated user instance status display into distinct "Status Local" and "Status GPU" columns to avoid clutter.
+- **Actions Refinement**: Standardized Local Server Actions column to always render exactly two buttons: a dynamic "Start/Stop" button and a "Restart" button (disabled when stopped).
+- **3-Dot Action Dropdown Menu**: Replaced the separate Reset and Delete buttons with a clean 3-dot vertical dropdown menu (`⋮`), storing "Reset Password" and "Delete User" actions.
+- **Additional Public Keys Provisioning**: Added a text area input in the global "Config" tab to allow the admin to specify additional SSH public keys (one per line). These keys are appended to the remote GPU VM's `/root/.ssh/authorized_keys` file during VM initialization.
+
 ---
 
 ## Technical Details
 
 - **WSL Local Development**: Configured to bind on `127.0.0.1` inside WSL environment to support local Windows browser access.
-- **Stack**: TypeScript, Bun runtime, Elysia JS web framework, Nunjucks templates, bun:sqlite (not Python/Starlette — README/old notes were from earlier prototype).
-- **Nunjucks Development Caching**: Set `noCache: true` on Nunjucks configuration to enable immediate template updates without server restarts.
+- **Stack**: TypeScript, React, Vite, Bun runtime, Elysia JS web server, bun:sqlite (removed nunjucks and static frontend templates).
 
 ## Verification
 Scripts available in [/scratch](file:///home/hubjupylab/hubjupylab/scratch):
 - [verify_hub.py](file:///home/hubjupylab/hubjupylab/scratch/verify_hub.py): Standard verification of spawner, db, and user flows.
 - [verify_admin_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_admin_controls.py): Verification of admin routes.
 - [verify_gpu.py](file:///home/hubjupylab/hubjupylab/scratch/verify_gpu.py): Verification of GPU config assignment and rsync failures.
-- [verify_htmx_user_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_htmx_user_controls.py): Verification of user dashboard HTMX endpoints.
-- [verify_htmx_admin_controls.py](file:///home/hubjupylab/hubjupylab/scratch/verify_htmx_admin_controls.py): Verification of admin dashboard HTMX endpoints.
-- [verify_list_dirs.py](file:///home/hubjupylab/hubjupylab/scratch/verify_list_dirs.py): Verification of user directory listing for rsync.
-- [verify_status_polling.py](file:///home/hubjupylab/hubjupylab/scratch/verify_status_polling.py): Verification of status polling endpoints and OOB properties.
 - [verify_reset_password.ts](file:///home/hubjupylab/hubjupylab/scratch/verify_reset_password.ts): End-to-end integration test verifying admin password resets, database flag setting, force redirects to `/change-password`, and password change updates.
+
